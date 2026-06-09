@@ -26,9 +26,25 @@ function currencyOptions(selected) {
 
 const state = {
   tab: 'catalogo',     // catalogo | favoritos | lojas
-  category: 'Todos',   // filtro de categoria
   search: '',
+  brands: [],          // marcas selecionadas (vazio = todas)
+  stores: [],          // ids de loja selecionados (vazio = todas)
+  categories: [],      // categorias selecionadas (vazio = todas)
 };
+
+function activeFilterCount() {
+  return state.brands.length + state.stores.length + state.categories.length;
+}
+function clearFilters() {
+  state.brands = []; state.stores = []; state.categories = [];
+}
+
+// Marcas distintas presentes no banco (pra preencher o filtro)
+async function distinctBrands() {
+  const products = await DB.listProducts();
+  return [...new Set(products.map((p) => p.brand).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
 
 const app = document.getElementById('app');
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -93,24 +109,44 @@ async function renderCatalog() {
   let products = await DB.listProducts();
 
   if (onlyFav) products = products.filter((p) => p.favorite);
-  if (state.category !== 'Todos') products = products.filter((p) => p.category === state.category);
+  if (state.brands.length) products = products.filter((p) => state.brands.includes(p.brand || ''));
+  if (state.categories.length) products = products.filter((p) => state.categories.includes(p.category));
   if (state.search.trim()) {
     const q = state.search.trim().toLowerCase();
     products = products.filter((p) =>
       `${p.name} ${p.brand || ''}`.toLowerCase().includes(q));
   }
 
-  const summaries = await Promise.all(products.map((p) => priceSummary(p.id)));
+  let summaries = await Promise.all(products.map((p) => priceSummary(p.id)));
 
-  const chips = ['Todos', ...CATEGORIES]
-    .map((c) => `<button class="chip ${state.category === c ? 'active' : ''}" data-cat="${c}">${c}</button>`)
-    .join('');
+  // filtro por loja: produto precisa ter preço em alguma loja selecionada
+  if (state.stores.length) {
+    const kept = products
+      .map((p, i) => [p, summaries[i]])
+      .filter(([, s]) => s.prices.some((pr) => state.stores.includes(pr.storeId)));
+    products = kept.map((x) => x[0]);
+    summaries = kept.map((x) => x[1]);
+  }
+
+  const stores = await DB.listStores();
+  const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
+  const count = activeFilterCount();
+
+  // chips dos filtros ativos (removíveis)
+  const activeChips = [
+    ...state.brands.map((b) => `<button class="achip" data-rm="brand" data-val="${esc(b)}">${esc(b)} ✕</button>`),
+    ...state.stores.map((id) => `<button class="achip" data-rm="store" data-val="${esc(id)}">🏪 ${esc(storeName[id] || 'Loja')} ✕</button>`),
+    ...state.categories.map((c) => `<button class="achip" data-rm="cat" data-val="${esc(c)}">${esc(c)} ✕</button>`),
+  ].join('');
 
   let body;
   if (!products.length) {
+    const filtered = count > 0 || state.search.trim();
     body = `<div class="empty">
       <div class="big">${onlyFav ? '⭐' : '🔎'}</div>
-      <p>${onlyFav ? 'Nenhum favorito ainda.<br>Toque na estrela de um produto.' : 'Catálogo vazio.<br>Toque no + pra cadastrar o primeiro achado.'}</p>
+      <p>${filtered
+        ? 'Nenhum produto com esses filtros.<br>Tente afrouxar a busca.'
+        : (onlyFav ? 'Nenhum favorito ainda.<br>Toque na estrela de um produto.' : 'Catálogo vazio.<br>Toque no + pra cadastrar o primeiro achado.')}</p>
     </div>`;
   } else {
     body = `<div class="grid">${products.map((p, i) => productCard(p, summaries[i])).join('')}</div>`;
@@ -121,10 +157,15 @@ async function renderCatalog() {
       <h1>✨ Achadora</h1>
       <div class="subtitle">${onlyFav ? 'Seus favoritos' : 'Seu catálogo de garimpo'}</div>
     </header>
-    <div class="search">
-      🔍 <input id="search" placeholder="Buscar por nome ou marca" value="${esc(state.search)}" />
+    <div class="search-row">
+      <div class="search">
+        🔍 <input id="search" placeholder="Buscar por nome ou marca" value="${esc(state.search)}" />
+      </div>
+      <button class="filter-btn ${count ? 'on' : ''}" id="filter-btn" aria-label="Filtros">
+        🎛️${count ? `<span class="badge">${count}</span>` : ''}
+      </button>
     </div>
-    ${onlyFav ? '' : `<div class="chips">${chips}</div>`}
+    ${count ? `<div class="active-filters">${activeChips}<button class="achip clear" data-rm="all">Limpar</button></div>` : ''}
     <main>${body}</main>
     <button class="fab" id="fab" aria-label="Adicionar produto">+</button>
   `;
@@ -134,13 +175,63 @@ async function renderCatalog() {
     // re-render leve da lista sem perder o foco do input
     debouncedRerenderList();
   });
+  $('#filter-btn').addEventListener('click', () => openFilterSheet());
   $('#fab').addEventListener('click', () => openProductForm());
-  app.querySelectorAll('.chip').forEach((c) =>
-    c.addEventListener('click', () => { state.category = c.dataset.cat; render(); }));
+  app.querySelectorAll('.active-filters .achip').forEach((b) =>
+    b.addEventListener('click', () => {
+      const { rm, val } = b.dataset;
+      if (rm === 'all') clearFilters();
+      else if (rm === 'brand') state.brands = state.brands.filter((x) => x !== val);
+      else if (rm === 'store') state.stores = state.stores.filter((x) => x !== val);
+      else if (rm === 'cat') state.categories = state.categories.filter((x) => x !== val);
+      render();
+    }));
   app.querySelectorAll('.card .fav').forEach((b) =>
     b.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(b.dataset.id); }));
   app.querySelectorAll('.card[data-id]').forEach((c) =>
     c.addEventListener('click', () => openProductDetail(c.dataset.id)));
+}
+
+// Painel de filtros (Marca, Loja, Categoria) — abre de baixo pra cima
+async function openFilterSheet() {
+  const brands = await distinctBrands();
+  const stores = await DB.listStores();
+  const sel = { brands: new Set(state.brands), stores: new Set(state.stores), categories: new Set(state.categories) };
+
+  const fchip = (val, label, group) =>
+    `<button class="fchip ${sel[group].has(val) ? 'active' : ''}" data-group="${group}" data-val="${esc(val)}">${esc(label)}</button>`;
+
+  const brandSec = brands.length
+    ? `<div class="section-title">Marca</div><div class="fchips">${brands.map((b) => fchip(b, b, 'brands')).join('')}</div>` : '';
+  const storeSec = stores.length
+    ? `<div class="section-title">Loja</div><div class="fchips">${stores.map((s) => fchip(s.id, s.name, 'stores')).join('')}</div>` : '';
+  const catSec = `<div class="section-title">Categoria</div><div class="fchips">${CATEGORIES.map((c) => fchip(c, c, 'categories')).join('')}</div>`;
+
+  const bg = openSheet(`
+    <h2>Filtros</h2>
+    ${brandSec}
+    ${storeSec}
+    ${catSec}
+    <div class="row" style="margin-top:20px">
+      <button class="btn secondary" id="f-clear">Limpar tudo</button>
+      <button class="btn" id="f-apply">Aplicar</button>
+    </div>
+  `);
+
+  bg.querySelectorAll('.fchip').forEach((b) =>
+    b.addEventListener('click', () => {
+      const { group, val } = b.dataset;
+      if (sel[group].has(val)) sel[group].delete(val); else sel[group].add(val);
+      b.classList.toggle('active');
+    }));
+  $('#f-clear', bg).addEventListener('click', () => { clearFilters(); closeSheet(bg); render(); });
+  $('#f-apply', bg).addEventListener('click', () => {
+    state.brands = [...sel.brands];
+    state.stores = [...sel.stores];
+    state.categories = [...sel.categories];
+    closeSheet(bg);
+    render();
+  });
 }
 
 let _rerenderTimer;
@@ -579,7 +670,7 @@ async function loadSeed(file, label) {
     await DB.importAll(data);
     // volta pra aba Catálogo (sem filtros) pra garantir que os produtos apareçam
     state.tab = 'catalogo';
-    state.category = 'Todos';
+    clearFilters();
     state.search = '';
     document.querySelectorAll('.tabbar button').forEach((b) =>
       b.classList.toggle('active', b.dataset.tab === 'catalogo'));
@@ -620,7 +711,7 @@ function setTab(tab) {
     return;
   }
   state.tab = tab;
-  if (tab !== 'catalogo') state.category = 'Todos';
+  if (tab === 'favoritos') clearFilters();
   document.querySelectorAll('.tabbar button').forEach((b) =>
     b.classList.toggle('active', b.dataset.tab === tab));
   render();
