@@ -156,12 +156,17 @@ main { padding: 8px 16px 16px; }
 .card .price { margin-top: 8px; font-size: 15px; font-weight: 700; color: var(--green); }
 .card .price small { color: var(--muted); font-weight: 400; font-size: 11px; display: block; }
 .card .price.none { color: var(--muted); font-weight: 500; font-size: 13px; }
-.card .fav {
+.card .badges {
   position: absolute; top: 8px; right: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.card .fav, .card .inlist {
   background: rgba(0,0,0,0.45); border: 0; border-radius: 999px;
   width: 34px; height: 34px; font-size: 17px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
 }
+.card .inlist { font-size: 15px; opacity: 0.55; }
+.card .inlist.on { opacity: 1; background: var(--accent); }
 
 .empty { text-align: center; color: var(--muted); padding: 48px 24px; }
 .empty .big { font-size: 48px; margin-bottom: 8px; }
@@ -361,22 +366,3 @@ textarea.input { resize: vertical; min-height: 64px; }
   background: var(--surface-2); border: 1px solid var(--border); font-weight: 700;
 }
 .pick-row.on .pick-check { background: var(--accent); border-color: var(--accent); color: #fff; }
-
-/* ---------- Impressão do orçamento (PDF) ---------- */
-.print-area { display: none; }
-@media print {
-  body > *:not(.print-area) { display: none !important; }
-  .print-area { display: block; }
-  body { background: #fff; }
-  .pq { color: #111; font-family: -apple-system, Segoe UI, Roboto, sans-serif; padding: 8px; }
-  .pq-head h1 { margin: 0 0 4px; font-size: 22px; }
-  .pq-sub { color: #555; font-size: 13px; margin-bottom: 16px; }
-  .pq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .pq-table th, .pq-table td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #ddd; }
-  .pq-table th { border-bottom: 2px solid #333; text-transform: uppercase; font-size: 11px; color: #555; }
-  .pq-table .num { text-align: right; white-space: nowrap; }
-  .pq-table .vol { color: #777; font-size: 11px; }
-  .pq-total { display: flex; justify-content: space-between; margin-top: 16px;
-    padding-top: 10px; border-top: 2px solid #333; font-size: 16px; }
-  .pq-foot { margin-top: 28px; color: #999; font-size: 11px; text-align: center; }
-}

@@ -133,6 +133,11 @@ async function renderCatalog() {
   const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const count = activeFilterCount();
 
+  // produtos que já estão em alguma lista (pra mostrar o selo na miniatura)
+  const lists = await DB.listLists();
+  const inAnyList = new Set();
+  lists.forEach((l) => (l.items || []).forEach((it) => inAnyList.add(it.productId)));
+
   // chips de categoria (rolagem horizontal rápida)
   const catChips = ['Todos', ...CATEGORIES]
     .map((c) => `<button class="chip ${state.category === c ? 'active' : ''}" data-cat="${c}">${c}</button>`)
@@ -154,7 +159,7 @@ async function renderCatalog() {
         : (onlyFav ? 'Nenhum favorito ainda.<br>Toque na estrela de um produto.' : 'Catálogo vazio.<br>Toque no + pra cadastrar o primeiro achado.')}</p>
     </div>`;
   } else {
-    body = `<div class="grid">${products.map((p, i) => productCard(p, summaries[i])).join('')}</div>`;
+    body = `<div class="grid">${products.map((p, i) => productCard(p, summaries[i], inAnyList.has(p.id))).join('')}</div>`;
   }
 
   app.innerHTML = `
@@ -195,6 +200,8 @@ async function renderCatalog() {
     }));
   app.querySelectorAll('.card .fav').forEach((b) =>
     b.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(b.dataset.id); }));
+  app.querySelectorAll('.card .inlist').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); openAddToList(b.dataset.id); }));
   app.querySelectorAll('.card[data-id]').forEach((c) =>
     c.addEventListener('click', () => openProductDetail(c.dataset.id)));
 }
@@ -244,7 +251,7 @@ function debouncedRerenderList() {
   _rerenderTimer = setTimeout(render, 220);
 }
 
-function productCard(p, summary) {
+function productCard(p, summary, inList = false) {
   const thumb = p.image
     ? `<img class="thumb" src="${p.image}" alt="">`
     : `<div class="thumb placeholder">🧴</div>`;
@@ -258,7 +265,10 @@ function productCard(p, summary) {
   return `
     <div class="card" data-id="${p.id}">
       ${thumb}
-      <button class="fav" data-id="${p.id}">${p.favorite ? '❤️' : '🤍'}</button>
+      <div class="badges">
+        <button class="fav" data-id="${p.id}">${p.favorite ? '❤️' : '🤍'}</button>
+        <button class="inlist ${inList ? 'on' : ''}" data-id="${p.id}" aria-label="Adicionar a uma lista" title="${inList ? 'Já está em uma lista' : 'Adicionar a uma lista'}">🧾</button>
+      </div>
       <div class="info">
         <div class="name">${esc(p.name)}</div>
         <div class="brand">${esc(p.brand || '—')}</div>
@@ -550,6 +560,7 @@ async function openAddToList(productId) {
     if (l.items.some((x) => x.productId === productId)) toast('Já está nessa lista');
     else { l.items.push({ productId, qty: 1 }); await DB.saveList(l); toast('Adicionado à lista ✨'); }
     closeSheet(bg);
+    render(); // atualiza o selo 🧾 na miniatura
   }));
   $('#atl-new', bg).addEventListener('click', async () => {
     const name = prompt('Nome da nova lista:');
@@ -558,10 +569,12 @@ async function openAddToList(productId) {
       toast('Lista criada com o produto ✨');
     }
     closeSheet(bg);
+    render();
   });
 }
 
-// Exporta a lista como PDF usando a impressão nativa do navegador (zero dependência)
+// Exporta a lista como PDF imprimindo um iframe isolado e autossuficiente.
+// Mais robusto no celular do que depender de @media print na página viva.
 async function exportListPDF(id) {
   const list = await DB.getList(id);
   if (!list) return;
@@ -576,28 +589,56 @@ async function exportListPDF(id) {
       <td class="num">${r.qty}</td>
       <td class="num">${r.unit != null ? formatPrice(r.unit, r.currency) : '—'}</td>
       <td class="num">${r.lineTotal != null ? formatPrice(r.lineTotal, r.currency) : '—'}</td>
-    </tr>`).join('');
+    </tr>`).join('') || '<tr><td colspan="4">Lista vazia.</td></tr>';
 
-  document.querySelectorAll('.print-area').forEach((n) => n.remove());
-  const area = document.createElement('div');
-  area.className = 'print-area';
-  area.innerHTML = `
-    <div class="pq">
-      <div class="pq-head">
-        <h1>${esc(list.name)}</h1>
-        <div class="pq-sub">${list.storeId ? esc(storeName[list.storeId] || 'Loja') + ' · ' : ''}${dateStr}</div>
-      </div>
-      <table class="pq-table">
+  const docHtml = `<!DOCTYPE html><html lang="pt-br"><head><meta charset="utf-8">
+    <title>${esc(list.name)}</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #111; margin: 24px; }
+      h1 { margin: 0 0 4px; font-size: 22px; }
+      .sub { color: #555; font-size: 13px; margin-bottom: 18px; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #ddd; vertical-align: top; }
+      th { border-bottom: 2px solid #333; text-transform: uppercase; font-size: 11px; color: #555; }
+      .num { text-align: right; white-space: nowrap; }
+      .vol { color: #777; font-size: 11px; }
+      .total { display: flex; justify-content: space-between; margin-top: 16px;
+        padding-top: 10px; border-top: 2px solid #333; font-size: 17px; font-weight: 700; }
+      .foot { margin-top: 28px; color: #999; font-size: 11px; text-align: center; }
+    </style></head><body>
+      <h1>${esc(list.name)}</h1>
+      <div class="sub">${list.storeId ? esc(storeName[list.storeId] || 'Loja') + ' · ' : ''}${dateStr}</div>
+      <table>
         <thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Preço un.</th><th class="num">Subtotal</th></tr></thead>
-        <tbody>${rowsHtml || '<tr><td colspan="4">Lista vazia.</td></tr>'}</tbody>
+        <tbody>${rowsHtml}</tbody>
       </table>
-      <div class="pq-total"><span>Total</span><strong>${totalsToStr(totals)}</strong></div>
-      <div class="pq-foot">Gerado pela Achadora · ${dateStr}</div>
-    </div>`;
-  document.body.appendChild(area);
-  const cleanup = () => { area.remove(); window.removeEventListener('afterprint', cleanup); };
-  window.addEventListener('afterprint', cleanup);
-  window.print();
+      <div class="total"><span>Total</span><span>${totalsToStr(totals)}</span></div>
+      <div class="foot">Gerado pela Achadora · ${dateStr}</div>
+    </body></html>`;
+
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;';
+  document.body.appendChild(iframe);
+
+  const fire = () => {
+    const cw = iframe.contentWindow;
+    try { cw.focus(); cw.print(); } catch (e) { toast('Não foi possível abrir a impressão'); }
+    // remove o iframe depois que o diálogo fecha (com folga de segurança)
+    let removed = false;
+    const done = () => { if (removed) return; removed = true; iframe.remove(); };
+    cw.addEventListener('afterprint', done);
+    setTimeout(done, 60000);
+  };
+
+  const doc = iframe.contentWindow.document;
+  doc.open();
+  doc.write(docHtml);
+  doc.close();
+  // dá um tempinho pro layout/fonte assentarem antes de imprimir
+  if (doc.readyState === 'complete') setTimeout(fire, 120);
+  else iframe.onload = () => setTimeout(fire, 120);
 }
 
 // ---------- folha inferior genérica ----------
