@@ -1,5 +1,5 @@
 // Service worker da Achadora — cache simples pra funcionar offline.
-const CACHE = 'achadora-v1';
+const CACHE = 'achadora-v2';
 const ASSETS = [
   './',
   './index.html',
