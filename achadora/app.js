@@ -671,7 +671,7 @@ async function loadSeed(file, label) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (!data.products || !data.products.length) throw new Error('arquivo vazio');
-    await DB.importAll(data);
+    await DB.mergeCatalog(data);
     // volta pra aba Catálogo (sem filtros) pra garantir que os produtos apareçam
     state.tab = 'catalogo';
     clearFilters();

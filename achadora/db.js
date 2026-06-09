@@ -139,10 +139,30 @@ const DB = {
     ]);
     return { version: DB_VERSION, exportedAt: new Date().toISOString(), products, stores, prices };
   },
+  // Restaura um backup completo — sobrescreve tudo com o estado exato do arquivo.
+  // Use para backup do próprio usuário, onde o arquivo já contém os favoritos corretos.
   async importAll(data) {
     const db = await openDB();
     const t = db.transaction(['products', 'stores', 'prices'], 'readwrite');
     (data.products || []).forEach((p) => t.objectStore('products').put(p));
+    (data.stores || []).forEach((s) => t.objectStore('stores').put(s));
+    (data.prices || []).forEach((p) => t.objectStore('prices').put(p));
+    return txDone(t);
+  },
+
+  // Mescla um catálogo externo (seed) — faz upsert mas preserva campos editados pelo usuário
+  // (favorite e notes) em produtos que já existem no banco.
+  async mergeCatalog(data) {
+    const existing = await getAll('products');
+    const byId = Object.fromEntries(existing.map((p) => [p.id, p]));
+    const db = await openDB();
+    const t = db.transaction(['products', 'stores', 'prices'], 'readwrite');
+    (data.products || []).forEach((p) => {
+      const prev = byId[p.id];
+      t.objectStore('products').put(
+        prev ? { ...p, favorite: prev.favorite, notes: prev.notes } : p
+      );
+    });
     (data.stores || []).forEach((s) => t.objectStore('stores').put(s));
     (data.prices || []).forEach((p) => t.objectStore('prices').put(p));
     return txDone(t);
