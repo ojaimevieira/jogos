@@ -1,8 +1,8 @@
 // Achadora — camada de banco de dados (IndexedDB, 100% local no aparelho)
-// Três "tabelas": products (produtos), stores (lojas) e prices (preços por loja).
+// "Tabelas": products (produtos), stores (lojas), prices (preços) e lists (listas de desejos).
 
 const DB_NAME = 'achadora';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let _dbPromise = null;
 
 function openDB() {
@@ -24,6 +24,10 @@ function openDB() {
         const s = db.createObjectStore('prices', { keyPath: 'id' });
         s.createIndex('productId', 'productId', { unique: false });
         s.createIndex('storeId', 'storeId', { unique: false });
+      }
+      // v2: listas de desejos / orçamentos (itens embutidos na própria lista)
+      if (!db.objectStoreNames.contains('lists')) {
+        db.createObjectStore('lists', { keyPath: 'id' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -130,23 +134,42 @@ const DB = {
   },
   deletePrice: (id) => del('prices', id),
 
+  // Listas de desejos / orçamentos — { id, name, storeId?, items: [{ productId, qty }] }
+  async listLists() {
+    const lists = await getAll('lists');
+    return lists.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+  getList: (id) => get('lists', id),
+  saveList(l) {
+    if (!l.id) {
+      l.id = uid();
+      l.createdAt = Date.now();
+    }
+    if (!Array.isArray(l.items)) l.items = [];
+    l.updatedAt = Date.now();
+    return put('lists', l);
+  },
+  deleteList: (id) => del('lists', id),
+
   // Backup / restauração
   async exportAll() {
-    const [products, stores, prices] = await Promise.all([
+    const [products, stores, prices, lists] = await Promise.all([
       getAll('products'),
       getAll('stores'),
       getAll('prices'),
+      getAll('lists'),
     ]);
-    return { version: DB_VERSION, exportedAt: new Date().toISOString(), products, stores, prices };
+    return { version: DB_VERSION, exportedAt: new Date().toISOString(), products, stores, prices, lists };
   },
   // Restaura um backup completo — sobrescreve tudo com o estado exato do arquivo.
   // Use para backup do próprio usuário, onde o arquivo já contém os favoritos corretos.
   async importAll(data) {
     const db = await openDB();
-    const t = db.transaction(['products', 'stores', 'prices'], 'readwrite');
+    const t = db.transaction(['products', 'stores', 'prices', 'lists'], 'readwrite');
     (data.products || []).forEach((p) => t.objectStore('products').put(p));
     (data.stores || []).forEach((s) => t.objectStore('stores').put(s));
     (data.prices || []).forEach((p) => t.objectStore('prices').put(p));
+    (data.lists || []).forEach((l) => t.objectStore('lists').put(l));
     return txDone(t);
   },
 

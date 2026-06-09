@@ -101,6 +101,7 @@ async function priceSummary(productId) {
 // ---------- render principal ----------
 async function render() {
   if (state.tab === 'lojas') return renderStores();
+  if (state.tab === 'listas') return renderLists();
   return renderCatalog();
 }
 
@@ -301,6 +302,302 @@ async function renderStores() {
   $('#add-store').addEventListener('click', () => openStoreForm());
   app.querySelectorAll('[data-edit]').forEach((b) =>
     b.addEventListener('click', () => openStoreForm(b.dataset.edit)));
+}
+
+// ---------- listas de desejos / orçamentos ----------
+
+// Melhor preço de um produto numa loja específica; sem loja, o melhor preço geral.
+function priceForStore(prices, storeId) {
+  const pool = storeId ? prices.filter((p) => p.storeId === storeId) : prices;
+  if (!pool.length) return null;
+  return pool.slice().sort((a, b) => a.value - b.value)[0];
+}
+
+// Resolve os itens de uma lista (produto + preço + subtotal) e os totais por moeda.
+async function computeList(list) {
+  const rows = [];
+  for (const it of list.items || []) {
+    const product = await DB.getProduct(it.productId);
+    if (!product) continue; // produto foi removido do catálogo
+    const prices = await DB.pricesByProduct(it.productId);
+    const price = priceForStore(prices, list.storeId || null);
+    const qty = it.qty || 1;
+    rows.push({
+      productId: it.productId, qty, product,
+      unit: price ? price.value : null,
+      currency: price ? price.currency : null,
+      lineTotal: price ? price.value * qty : null,
+    });
+  }
+  const totals = {};
+  rows.forEach((r) => { if (r.lineTotal != null) totals[r.currency] = (totals[r.currency] || 0) + r.lineTotal; });
+  return { rows, totals };
+}
+
+function totalsToStr(totals) {
+  return Object.entries(totals).map(([c, v]) => formatPrice(v, c)).join(' + ') || '—';
+}
+
+async function renderLists() {
+  const lists = await DB.listLists();
+  const stores = await DB.listStores();
+  const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
+
+  let body;
+  if (!lists.length) {
+    body = `<div class="empty"><div class="big">🧾</div>
+      <p>Nenhuma lista ainda.<br>Crie uma lista pra montar um orçamento com uma loja.</p></div>`;
+  } else {
+    const computed = await Promise.all(lists.map((l) => computeList(l)));
+    body = lists.map((l, i) => {
+      const count = (l.items || []).length;
+      return `
+        <div class="list-card" data-list="${l.id}">
+          <div class="lc-main">
+            <div class="lc-name">🧾 ${esc(l.name)}</div>
+            <div class="lc-meta">${count} ${count === 1 ? 'item' : 'itens'}${l.storeId ? ' · 🏪 ' + esc(storeName[l.storeId] || 'Loja') : ''}</div>
+          </div>
+          <div class="lc-total">${totalsToStr(computed[i].totals)}</div>
+        </div>`;
+    }).join('');
+  }
+
+  app.innerHTML = `
+    <header class="app-header">
+      <h1>✨ Achadora</h1>
+      <div class="subtitle">Listas de desejos</div>
+    </header>
+    <main>
+      ${body}
+      <button class="btn" id="new-list" style="margin-top:10px">+ Nova lista</button>
+    </main>
+  `;
+  $('#new-list').addEventListener('click', () => openListForm());
+  app.querySelectorAll('[data-list]').forEach((c) =>
+    c.addEventListener('click', () => openListDetail(c.dataset.list)));
+}
+
+async function openListForm(existing) {
+  const list = existing || { name: '', storeId: '', items: [] };
+  const stores = await DB.listStores();
+  const storeOptions = stores
+    .map((s) => `<option value="${s.id}" ${list.storeId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+  const bg = openSheet(`
+    <h2>${existing ? 'Editar lista' : 'Nova lista'}</h2>
+    <label class="field"><span>Nome da lista</span>
+      <input class="input" id="l-name" value="${esc(list.name)}" placeholder="Ex.: Orçamento Mega Eletrônicos"></label>
+    <label class="field"><span>Loja do orçamento (opcional)</span>
+      <select class="input" id="l-store">
+        <option value="">— sem loja definida —</option>${storeOptions}
+      </select></label>
+    <p class="muted-note">Com uma loja definida, a lista usa os preços daquela loja e soma o total.</p>
+    <button class="btn" id="l-save" style="margin-top:14px">Salvar</button>
+  `);
+  $('#l-save', bg).addEventListener('click', async () => {
+    const name = $('#l-name', bg).value.trim();
+    if (!name) return toast('Dê um nome pra lista');
+    const saved = await DB.saveList({ ...list, name, storeId: $('#l-store', bg).value || null });
+    closeSheet(bg);
+    toast('Lista salva');
+    if (existing) render(); else openListDetail(saved.id);
+  });
+}
+
+async function openListDetail(id) {
+  const list = await DB.getList(id);
+  if (!list) return;
+  const stores = await DB.listStores();
+  const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
+  const { rows } = await computeList(list);
+
+  const itemRows = rows.length
+    ? rows.map((r) => `
+        <div class="li-row" data-row="${r.productId}">
+          ${r.product.image ? `<img class="li-thumb" src="${r.product.image}" alt="">` : '<div class="li-thumb placeholder">🧴</div>'}
+          <div class="li-info">
+            <div class="li-name">${esc(r.product.name)}</div>
+            <div class="li-price">${r.unit != null
+              ? formatPrice(r.unit, r.currency) + ' <span class="muted">un.</span>'
+              : '<span class="muted">sem preço' + (list.storeId ? ' nesta loja' : '') + '</span>'}</div>
+          </div>
+          <div class="li-qty">
+            <button class="qbtn" data-dec="${r.productId}">−</button>
+            <span class="qval" data-qty="${r.productId}">${r.qty}</span>
+            <button class="qbtn" data-inc="${r.productId}">+</button>
+          </div>
+          <button class="li-del" data-rm="${r.productId}" aria-label="Remover">🗑️</button>
+        </div>`).join('')
+    : '<p class="muted-note">Lista vazia. Toque em "Adicionar produtos".</p>';
+
+  const bg = openSheet(`
+    <div class="detail">
+      <h2>🧾 ${esc(list.name)}</h2>
+      <div class="brand">${list.storeId ? '🏪 ' + esc(storeName[list.storeId] || 'Loja') : 'Sem loja definida'}</div>
+      <div class="li-list">${itemRows}</div>
+      ${rows.length ? `<div class="li-total"><span>Total</span><strong>—</strong></div>` : ''}
+      <button class="btn secondary" id="l-add" style="margin-top:12px">+ Adicionar produtos</button>
+      <div class="row" style="margin-top:10px">
+        <button class="btn secondary" id="l-edit">✏️ Editar</button>
+        <button class="btn" id="l-pdf">📄 Exportar PDF</button>
+      </div>
+      <button class="btn danger" id="l-del" style="margin-top:10px">Excluir lista</button>
+    </div>
+  `);
+
+  // modelo mutável pra atualizar quantidades/total sem reabrir a folha
+  const model = rows;
+  const updateTotal = () => {
+    const totals = {};
+    model.forEach((r) => { if (r.lineTotal != null) totals[r.currency] = (totals[r.currency] || 0) + r.lineTotal; });
+    const el = $('.li-total strong', bg);
+    if (el) el.textContent = totalsToStr(totals);
+  };
+  updateTotal();
+
+  const persist = async (mutate) => {
+    const l = await DB.getList(id);
+    mutate(l);
+    await DB.saveList(l);
+  };
+  const changeQty = (productId, delta) => {
+    const r = model.find((x) => x.productId === productId);
+    if (!r) return;
+    r.qty = Math.max(1, r.qty + delta);
+    r.lineTotal = r.unit != null ? r.unit * r.qty : null;
+    const q = $(`[data-qty="${productId}"]`, bg);
+    if (q) q.textContent = r.qty;
+    updateTotal();
+    persist((l) => { const it = (l.items || []).find((x) => x.productId === productId); if (it) it.qty = r.qty; });
+  };
+  bg.querySelectorAll('[data-inc]').forEach((b) => b.addEventListener('click', () => changeQty(b.dataset.inc, +1)));
+  bg.querySelectorAll('[data-dec]').forEach((b) => b.addEventListener('click', () => changeQty(b.dataset.dec, -1)));
+  bg.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', async () => {
+    const pid = b.dataset.rm;
+    const i = model.findIndex((x) => x.productId === pid);
+    if (i >= 0) model.splice(i, 1);
+    const rowEl = $(`.li-row[data-row="${pid}"]`, bg);
+    if (rowEl) rowEl.remove();
+    updateTotal();
+    await persist((l) => { l.items = (l.items || []).filter((x) => x.productId !== pid); });
+    if (!model.length) { closeSheet(bg); openListDetail(id); }
+  }));
+  $('#l-add', bg).addEventListener('click', () => openProductPicker(id, bg));
+  $('#l-edit', bg).addEventListener('click', async () => { closeSheet(bg); openListForm(await DB.getList(id)); });
+  $('#l-pdf', bg).addEventListener('click', () => exportListPDF(id));
+  $('#l-del', bg).addEventListener('click', async () => {
+    if (!confirm('Excluir esta lista?')) return;
+    await DB.deleteList(id);
+    closeSheet(bg);
+    toast('Lista excluída');
+    render();
+  });
+}
+
+// Seletor de produtos pra adicionar numa lista (toca pra incluir/remover)
+async function openProductPicker(listId, parentBg) {
+  const list = await DB.getList(listId);
+  const inList = new Set((list.items || []).map((x) => x.productId));
+  const products = await DB.listProducts();
+  let q = '';
+
+  const bg = openSheet(`
+    <h2>Adicionar produtos</h2>
+    <div class="search" style="margin:0 0 10px"><input id="pick-search" placeholder="🔍 Buscar por nome ou marca"></div>
+    <div class="pick-list" id="pick-list"></div>
+    <button class="btn" id="pick-done" style="margin-top:12px">Concluir</button>
+  `);
+
+  const renderPick = () => {
+    const ql = q.trim().toLowerCase();
+    const filtered = (ql ? products.filter((p) => `${p.name} ${p.brand || ''}`.toLowerCase().includes(ql)) : products).slice(0, 80);
+    const host = $('#pick-list', bg);
+    host.innerHTML = filtered.map((p) => `
+      <div class="pick-row ${inList.has(p.id) ? 'on' : ''}" data-pick="${p.id}">
+        ${p.image ? `<img class="li-thumb" src="${p.image}" alt="">` : '<div class="li-thumb placeholder">🧴</div>'}
+        <div class="li-info"><div class="li-name">${esc(p.name)}</div><div class="li-price muted">${esc(p.brand || '')}</div></div>
+        <div class="pick-check">${inList.has(p.id) ? '✓' : '+'}</div>
+      </div>`).join('') || '<p class="muted-note">Nada encontrado.</p>';
+    host.querySelectorAll('[data-pick]').forEach((row) =>
+      row.addEventListener('click', async () => {
+        const pid = row.dataset.pick;
+        const l = await DB.getList(listId);
+        l.items = l.items || [];
+        if (inList.has(pid)) { l.items = l.items.filter((x) => x.productId !== pid); inList.delete(pid); }
+        else { l.items.push({ productId: pid, qty: 1 }); inList.add(pid); }
+        await DB.saveList(l);
+        row.classList.toggle('on', inList.has(pid));
+        $('.pick-check', row).textContent = inList.has(pid) ? '✓' : '+';
+      }));
+  };
+  $('#pick-search', bg).addEventListener('input', (e) => { q = e.target.value; renderPick(); });
+  $('#pick-done', bg).addEventListener('click', () => { closeSheet(bg); closeSheet(parentBg); openListDetail(listId); });
+  renderPick();
+}
+
+// Adicionar um produto a uma lista (a partir do detalhe do produto)
+async function openAddToList(productId) {
+  const lists = await DB.listLists();
+  const opts = lists.map((l) =>
+    `<button class="btn secondary list-pick" data-l="${l.id}" style="margin-top:8px">🧾 ${esc(l.name)}</button>`).join('');
+  const bg = openSheet(`
+    <h2>Adicionar à lista</h2>
+    ${lists.length ? opts : '<p class="muted-note">Você ainda não tem listas. Crie a primeira:</p>'}
+    <button class="btn" id="atl-new" style="margin-top:12px">+ Nova lista com este produto</button>
+  `);
+  bg.querySelectorAll('.list-pick').forEach((b) => b.addEventListener('click', async () => {
+    const l = await DB.getList(b.dataset.l);
+    l.items = l.items || [];
+    if (l.items.some((x) => x.productId === productId)) toast('Já está nessa lista');
+    else { l.items.push({ productId, qty: 1 }); await DB.saveList(l); toast('Adicionado à lista ✨'); }
+    closeSheet(bg);
+  }));
+  $('#atl-new', bg).addEventListener('click', async () => {
+    const name = prompt('Nome da nova lista:');
+    if (name && name.trim()) {
+      await DB.saveList({ name: name.trim(), storeId: null, items: [{ productId, qty: 1 }] });
+      toast('Lista criada com o produto ✨');
+    }
+    closeSheet(bg);
+  });
+}
+
+// Exporta a lista como PDF usando a impressão nativa do navegador (zero dependência)
+async function exportListPDF(id) {
+  const list = await DB.getList(id);
+  if (!list) return;
+  const stores = await DB.listStores();
+  const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
+  const { rows, totals } = await computeList(list);
+  const dateStr = new Date().toLocaleDateString('pt-BR');
+
+  const rowsHtml = rows.map((r) => `
+    <tr>
+      <td>${esc(r.product.name)}${r.product.volume ? ` <span class="vol">${esc(r.product.volume)}</span>` : ''}</td>
+      <td class="num">${r.qty}</td>
+      <td class="num">${r.unit != null ? formatPrice(r.unit, r.currency) : '—'}</td>
+      <td class="num">${r.lineTotal != null ? formatPrice(r.lineTotal, r.currency) : '—'}</td>
+    </tr>`).join('');
+
+  document.querySelectorAll('.print-area').forEach((n) => n.remove());
+  const area = document.createElement('div');
+  area.className = 'print-area';
+  area.innerHTML = `
+    <div class="pq">
+      <div class="pq-head">
+        <h1>${esc(list.name)}</h1>
+        <div class="pq-sub">${list.storeId ? esc(storeName[list.storeId] || 'Loja') + ' · ' : ''}${dateStr}</div>
+      </div>
+      <table class="pq-table">
+        <thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Preço un.</th><th class="num">Subtotal</th></tr></thead>
+        <tbody>${rowsHtml || '<tr><td colspan="4">Lista vazia.</td></tr>'}</tbody>
+      </table>
+      <div class="pq-total"><span>Total</span><strong>${totalsToStr(totals)}</strong></div>
+      <div class="pq-foot">Gerado pela Achadora · ${dateStr}</div>
+    </div>`;
+  document.body.appendChild(area);
+  const cleanup = () => { area.remove(); window.removeEventListener('afterprint', cleanup); };
+  window.addEventListener('afterprint', cleanup);
+  window.print();
 }
 
 // ---------- folha inferior genérica ----------
@@ -562,7 +859,8 @@ async function openProductDetail(id) {
       <div class="price-table">${priceRows}</div>
       <button class="btn secondary" id="add-price" style="margin-top:6px">+ Adicionar preço em loja</button>
 
-      <div class="row" style="margin-top:18px">
+      <button class="btn secondary" id="addlist-btn" style="margin-top:14px">🧾 Adicionar a uma lista</button>
+      <div class="row" style="margin-top:10px">
         <button class="btn secondary" id="fav-btn">${p.favorite ? '❤️ Favorito' : '🤍 Favoritar'}</button>
         <button class="btn secondary" id="edit-btn">✏️ Editar</button>
       </div>
@@ -580,6 +878,7 @@ async function openProductDetail(id) {
     render();
   });
   $('#add-price', bg).addEventListener('click', () => openPriceForm(id, bg));
+  $('#addlist-btn', bg).addEventListener('click', () => openAddToList(id));
   bg.querySelectorAll('[data-delprice]').forEach((b) =>
     b.addEventListener('click', async () => {
       await DB.deletePrice(b.dataset.delprice);

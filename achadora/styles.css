@@ -186,10 +186,10 @@ main { padding: 8px 16px 16px; }
 }
 .tabbar button {
   background: none; border: 0; color: var(--muted);
-  font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 4px 10px; flex: 1;
+  font-size: 10.5px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px 4px; flex: 1; min-width: 0;
 }
-.tabbar button .ic { font-size: 21px; }
+.tabbar button .ic { font-size: 20px; }
 .tabbar button.active { color: var(--accent); }
 
 /* Lojas */
@@ -308,3 +308,75 @@ textarea.input { resize: vertical; min-height: 64px; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
 
 .muted-note { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.muted { color: var(--muted); }
+
+/* ---------- Listas de desejos ---------- */
+.list-card {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
+}
+.list-card .lc-main { flex: 1; min-width: 0; }
+.list-card .lc-name { font-weight: 600; }
+.list-card .lc-meta { color: var(--muted); font-size: 13px; margin-top: 3px; }
+.list-card .lc-total { font-weight: 700; font-size: 15px; white-space: nowrap; }
+
+/* Linha de item dentro da lista */
+.li-list { margin-top: 6px; }
+.li-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.li-thumb { width: 46px; height: 46px; border-radius: 10px; object-fit: cover; flex: 0 0 auto; }
+.li-thumb.placeholder { display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); font-size: 22px; }
+.li-info { flex: 1; min-width: 0; }
+.li-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.li-price { font-size: 13px; margin-top: 2px; }
+.li-qty { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.qbtn {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  font-size: 17px; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+.qval { min-width: 20px; text-align: center; font-weight: 600; }
+.li-del { background: none; border: 0; font-size: 16px; flex: 0 0 auto; padding: 4px; }
+.li-total {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 14px; padding-top: 12px; border-top: 2px solid var(--border);
+}
+.li-total span { color: var(--muted); }
+.li-total strong { font-size: 20px; }
+
+/* Seletor de produtos */
+.pick-list { max-height: 50vh; overflow-y: auto; }
+.pick-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 6px; border-radius: 12px; border: 1px solid transparent;
+}
+.pick-row.on { border-color: var(--accent); background: rgba(124,92,255,0.10); }
+.pick-check {
+  width: 28px; height: 28px; border-radius: 50%; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); border: 1px solid var(--border); font-weight: 700;
+}
+.pick-row.on .pick-check { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------- Impressão do orçamento (PDF) ---------- */
+.print-area { display: none; }
+@media print {
+  body > *:not(.print-area) { display: none !important; }
+  .print-area { display: block; }
+  body { background: #fff; }
+  .pq { color: #111; font-family: -apple-system, Segoe UI, Roboto, sans-serif; padding: 8px; }
+  .pq-head h1 { margin: 0 0 4px; font-size: 22px; }
+  .pq-sub { color: #555; font-size: 13px; margin-bottom: 16px; }
+  .pq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .pq-table th, .pq-table td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #ddd; }
+  .pq-table th { border-bottom: 2px solid #333; text-transform: uppercase; font-size: 11px; color: #555; }
+  .pq-table .num { text-align: right; white-space: nowrap; }
+  .pq-table .vol { color: #777; font-size: 11px; }
+  .pq-total { display: flex; justify-content: space-between; margin-top: 16px;
+    padding-top: 10px; border-top: 2px solid #333; font-size: 16px; }
+  .pq-foot { margin-top: 28px; color: #999; font-size: 11px; text-align: center; }
+}
