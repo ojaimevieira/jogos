@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - claude/achadora-product-catalog-s3vfpl
   workflow_dispatch:
 
 permissions:
