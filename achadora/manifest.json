@@ -1,0 +1,20 @@
+{
+  "name": "Achadora — Catálogo de Garimpo",
+  "short_name": "Achadora",
+  "description": "Cadastre produtos que você encontra nas lojas, compare preços e salve seus favoritos.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
