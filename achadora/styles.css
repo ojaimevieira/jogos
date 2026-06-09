@@ -366,3 +366,39 @@ textarea.input { resize: vertical; min-height: 64px; }
   background: var(--surface-2); border: 1px solid var(--border); font-weight: 700;
 }
 .pick-row.on .pick-check { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------- Lojas: toggle Lista/Mapa + mapa ---------- */
+.seg {
+  display: flex; gap: 4px; margin: 8px 16px 0;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 4px;
+}
+.seg-btn {
+  flex: 1; background: none; border: 0; color: var(--muted);
+  padding: 9px 0; border-radius: 9px; font-size: 14px; font-weight: 600;
+}
+.seg-btn.on { background: var(--accent); color: #fff; }
+
+.store-map {
+  height: 62vh; min-height: 320px; width: 100%;
+  border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+.map-hint { color: var(--muted); font-size: 13px; margin-top: 10px; line-height: 1.5; }
+.map-fail { display: flex; align-items: center; justify-content: center; text-align: center;
+  height: 100%; padding: 24px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+
+.pick-map {
+  height: 220px; width: 100%; margin-top: 4px;
+  border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+
+.li-actions { display: flex; gap: 8px; align-items: center; }
+.list-item .s.loc { color: var(--green); }
+.list-item .s.noloc { color: var(--muted); opacity: 0.7; }
+
+/* Leaflet dentro do tema escuro: garante que os controles fiquem legíveis */
+.leaflet-container { font: inherit; }
+.leaflet-popup-content { font-size: 13px; line-height: 1.5; }
+.leaflet-popup-content a { color: var(--accent); font-weight: 600; text-decoration: none; }

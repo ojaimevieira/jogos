@@ -173,20 +173,22 @@ const DB = {
     return txDone(t);
   },
 
-  // Mescla um catálogo externo (seed) — faz upsert mas preserva campos editados pelo usuário
-  // (favorite e notes) em produtos que já existem no banco.
+  // Mescla um catálogo externo (seed) — faz upsert mas preserva o que o usuário editou:
+  // favorite/notes nos produtos, e a loja inteira (localização/endereço) quando já existe.
   async mergeCatalog(data) {
-    const existing = await getAll('products');
-    const byId = Object.fromEntries(existing.map((p) => [p.id, p]));
+    const [existingP, existingS] = await Promise.all([getAll('products'), getAll('stores')]);
+    const pById = Object.fromEntries(existingP.map((p) => [p.id, p]));
+    const sIds = new Set(existingS.map((s) => s.id));
     const db = await openDB();
     const t = db.transaction(['products', 'stores', 'prices'], 'readwrite');
     (data.products || []).forEach((p) => {
-      const prev = byId[p.id];
+      const prev = pById[p.id];
       t.objectStore('products').put(
         prev ? { ...p, favorite: prev.favorite, notes: prev.notes } : p
       );
     });
-    (data.stores || []).forEach((s) => t.objectStore('stores').put(s));
+    // só cria lojas novas; lojas existentes ficam como o usuário deixou (não apaga lat/lng/endereço)
+    (data.stores || []).forEach((s) => { if (!sIds.has(s.id)) t.objectStore('stores').put(s); });
     (data.prices || []).forEach((p) => t.objectStore('prices').put(p));
     return txDone(t);
   },

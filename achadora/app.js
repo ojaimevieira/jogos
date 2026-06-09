@@ -30,6 +30,7 @@ const state = {
   category: 'Todos',   // chip de categoria (rápido)
   brands: [],          // marcas selecionadas no painel (vazio = todas)
   stores: [],          // ids de loja selecionados no painel (vazio = todas)
+  lojasView: 'lista',  // lista | mapa
 };
 
 function activeFilterCount() {
@@ -285,33 +286,177 @@ async function toggleFav(id) {
   render();
 }
 
+// ---------- mapa (Leaflet sob demanda + OpenStreetMap) ----------
+let _leafletPromise = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (_leafletPromise) return _leafletPromise;
+  _leafletPromise = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    s.async = true;
+    s.onload = () => (window.L ? resolve(window.L) : reject(new Error('leaflet')));
+    s.onerror = () => reject(new Error('leaflet'));
+    document.head.appendChild(s);
+  });
+  return _leafletPromise;
+}
+
+// garante que os ícones de pino carreguem (evita o clássico pino quebrado do Leaflet via CDN)
+let _iconSet = false;
+function setDefaultIcon(L) {
+  if (_iconSet) return;
+  _iconSet = true;
+  delete L.Icon.Default.prototype._getIconUrl;
+  L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  });
+}
+
+function newMap(L, el, center, zoom) {
+  const map = L.map(el).setView(center, zoom);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap',
+  }).addTo(map);
+  return map;
+}
+
+// geocodifica um endereço via Nominatim (OSM). Retorna {lat,lng} ou null.
+async function geocodeAddress(q) {
+  if (!q || !q.trim()) return null;
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q.trim());
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.length) return null;
+    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  } catch (e) {
+    return null;
+  }
+}
+
+// abre a loja no Google Maps (app nativo no celular)
+function openMapsApp(store) {
+  if (!store) return;
+  const q = (store.lat != null && store.lng != null)
+    ? `${store.lat},${store.lng}`
+    : (store.address || store.name);
+  window.open('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q), '_blank');
+}
+
 // ---------- lojas ----------
 async function renderStores() {
   const stores = await DB.listStores();
-  const items = stores.length
-    ? stores.map((s) => `
+  const view = state.lojasView || 'lista';
+
+  const toggle = `
+    <div class="seg">
+      <button class="seg-btn ${view === 'lista' ? 'on' : ''}" data-view="lista">📋 Lista</button>
+      <button class="seg-btn ${view === 'mapa' ? 'on' : ''}" data-view="mapa">🗺️ Mapa</button>
+    </div>`;
+
+  let body;
+  if (view === 'mapa') {
+    body = `<div id="store-map" class="store-map"></div><div id="map-hint" class="map-hint"></div>`;
+  } else if (stores.length) {
+    body = stores.map((s) => `
         <div class="list-item">
           <div>
             <div class="t">🏪 ${esc(s.name)}</div>
             ${s.address ? `<div class="s">${esc(s.address)}</div>` : ''}
+            <div class="s ${s.lat != null ? 'loc' : 'noloc'}">${s.lat != null ? '📍 localização marcada' : 'sem localização'}</div>
           </div>
-          <button class="icon-btn" data-edit="${s.id}">✏️</button>
-        </div>`).join('')
-    : `<div class="empty"><div class="big">🏪</div><p>Nenhuma loja salva.<br>Adicione uma pra reutilizar nos cadastros.</p></div>`;
+          <div class="li-actions">
+            ${(s.lat != null || s.address) ? `<button class="icon-btn" data-maps="${s.id}" title="Abrir no Google Maps">🧭</button>` : ''}
+            <button class="icon-btn" data-edit="${s.id}">✏️</button>
+          </div>
+        </div>`).join('');
+  } else {
+    body = `<div class="empty"><div class="big">🏪</div><p>Nenhuma loja salva.<br>Adicione uma pra reutilizar nos cadastros.</p></div>`;
+  }
 
   app.innerHTML = `
     <header class="app-header">
       <h1>✨ Achadora</h1>
       <div class="subtitle">Lojas</div>
     </header>
+    ${toggle}
     <main>
-      ${items}
-      <button class="btn secondary" id="add-store" style="margin-top:8px">+ Nova loja</button>
+      ${body}
+      ${view === 'lista' ? '<button class="btn secondary" id="add-store" style="margin-top:8px">+ Nova loja</button>' : ''}
     </main>
   `;
-  $('#add-store').addEventListener('click', () => openStoreForm());
-  app.querySelectorAll('[data-edit]').forEach((b) =>
-    b.addEventListener('click', () => openStoreForm(b.dataset.edit)));
+
+  app.querySelectorAll('.seg-btn').forEach((b) =>
+    b.addEventListener('click', () => { state.lojasView = b.dataset.view; render(); }));
+
+  if (view === 'mapa') {
+    initStoreMap(stores);
+  } else {
+    const add = $('#add-store');
+    if (add) add.addEventListener('click', () => openStoreForm());
+    app.querySelectorAll('[data-edit]').forEach((b) =>
+      b.addEventListener('click', () => openStoreForm(b.dataset.edit)));
+    app.querySelectorAll('[data-maps]').forEach((b) =>
+      b.addEventListener('click', async () => openMapsApp(await DB.getStore(b.dataset.maps))));
+  }
+}
+
+async function initStoreMap(stores) {
+  const located = stores.filter((s) => s.lat != null && s.lng != null);
+  const hint = $('#map-hint');
+  if (hint && !located.length) {
+    hint.innerHTML = 'Nenhuma loja com localização ainda. Edite uma loja e marque o ponto (por endereço, GPS ou tocando no mapa).';
+  }
+  let L;
+  try {
+    L = await loadLeaflet();
+  } catch (e) {
+    const el = $('#store-map');
+    if (el) el.innerHTML = '<div class="map-fail">Não consegui carregar o mapa (sem internet?).<br>Use o 🧭 na aba Lista pra abrir no Google Maps.</div>';
+    return;
+  }
+  setDefaultIcon(L);
+  const el = $('#store-map');
+  if (!el) return;
+  const center = located.length ? [located[0].lat, located[0].lng] : [-14.235, -51.925];
+  const map = newMap(L, el, center, located.length ? 13 : 4);
+  setTimeout(() => map.invalidateSize(), 200);
+
+  const pts = [];
+  located.forEach((s) => {
+    const m = L.marker([s.lat, s.lng]).addTo(map);
+    m.bindPopup(`<b>🏪 ${esc(s.name)}</b>${s.address ? '<br>' + esc(s.address) : ''}
+      <br><a href="#" data-pop-maps="${s.id}">🧭 Google Maps</a>
+      &nbsp;·&nbsp;<a href="#" data-pop-prod="${s.id}">ver produtos</a>`);
+    pts.push([s.lat, s.lng]);
+  });
+  if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40] });
+
+  map.on('popupopen', (e) => {
+    const node = e.popup.getElement();
+    const mapsLink = node.querySelector('[data-pop-maps]');
+    const prodLink = node.querySelector('[data-pop-prod]');
+    if (mapsLink) mapsLink.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      openMapsApp(await DB.getStore(mapsLink.dataset.popMaps));
+    });
+    if (prodLink) prodLink.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      state.stores = [prodLink.dataset.popProd];
+      state.tab = 'catalogo';
+      document.querySelectorAll('.tabbar button').forEach((b) =>
+        b.classList.toggle('active', b.dataset.tab === 'catalogo'));
+      render();
+    });
+  });
 }
 
 // ---------- listas de desejos / orçamentos ----------
@@ -727,19 +872,92 @@ function enableDragToClose(bg, sheet) {
 // ---------- formulário de loja ----------
 async function openStoreForm(id) {
   const store = id ? await DB.getStore(id) : { name: '', address: '' };
+  let picked = (store.lat != null && store.lng != null) ? { lat: store.lat, lng: store.lng } : null;
+
   const bg = openSheet(`
     <h2>${id ? 'Editar loja' : 'Nova loja'}</h2>
     <label class="field"><span>Nome da loja</span>
       <input class="input" id="st-name" value="${esc(store.name)}" placeholder="Ex.: Perfumaria Centro"></label>
     <label class="field"><span>Endereço (opcional)</span>
       <input class="input" id="st-addr" value="${esc(store.address || '')}" placeholder="Rua, bairro, cidade"></label>
-    <button class="btn" id="st-save">Salvar</button>
+
+    <div class="section-title">Localização no mapa</div>
+    <div class="row">
+      <button class="btn secondary" type="button" id="st-find">🔎 Buscar pelo endereço</button>
+      <button class="btn secondary" type="button" id="st-geo">📍 Minha localização</button>
+    </div>
+    <div id="pick-map" class="pick-map"></div>
+    <div class="muted-note" id="st-coords">${picked
+      ? '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5)
+      : 'Busque pelo endereço, use o GPS, ou toque no mapa pra marcar o ponto.'}</div>
+
+    <button class="btn" id="st-save" style="margin-top:14px">Salvar</button>
     ${id ? '<button class="btn danger" id="st-del" style="margin-top:10px">Excluir loja</button>' : ''}
   `);
+
+  // mapa de seleção (carrega o Leaflet sob demanda)
+  (async () => {
+    let L;
+    try {
+      L = await loadLeaflet();
+    } catch (e) {
+      const el = $('#pick-map', bg);
+      if (el) el.innerHTML = '<div class="map-fail">Mapa indisponível (sem internet). Você ainda pode salvar a loja sem localização.</div>';
+      return;
+    }
+    setDefaultIcon(L);
+    const el = $('#pick-map', bg);
+    if (!el) return;
+    const center = picked ? [picked.lat, picked.lng] : [-14.235, -51.925];
+    const map = newMap(L, el, center, picked ? 15 : 4);
+    setTimeout(() => map.invalidateSize(), 250);
+
+    let marker = null;
+    const updateCoords = () => {
+      const c = $('#st-coords', bg);
+      if (c && picked) c.textContent = '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5);
+    };
+    const setPin = (lat, lng, zoom) => {
+      picked = { lat, lng };
+      if (marker) {
+        marker.setLatLng([lat, lng]);
+      } else {
+        marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+        marker.on('dragend', () => { const p = marker.getLatLng(); picked = { lat: p.lat, lng: p.lng }; updateCoords(); });
+      }
+      if (zoom) map.setView([lat, lng], zoom);
+      updateCoords();
+    };
+    if (picked) setPin(picked.lat, picked.lng);
+    map.on('click', (e) => setPin(e.latlng.lat, e.latlng.lng));
+
+    $('#st-geo', bg).addEventListener('click', () => {
+      if (!navigator.geolocation) return toast('GPS indisponível');
+      toast('Buscando sua localização…');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => setPin(pos.coords.latitude, pos.coords.longitude, 16),
+        () => toast('Não consegui pegar o GPS'),
+        { enableHighAccuracy: true, timeout: 10000 });
+    });
+    $('#st-find', bg).addEventListener('click', async () => {
+      const q = $('#st-addr', bg).value.trim();
+      if (!q) return toast('Digite o endereço primeiro');
+      toast('Procurando endereço…');
+      const r = await geocodeAddress(q);
+      if (!r) return toast('Endereço não encontrado');
+      setPin(r.lat, r.lng, 16);
+    });
+  })();
+
   $('#st-save', bg).addEventListener('click', async () => {
     const name = $('#st-name', bg).value.trim();
     if (!name) return toast('Dê um nome pra loja');
-    await DB.saveStore({ ...store, name, address: $('#st-addr', bg).value.trim() });
+    await DB.saveStore({
+      ...store, name,
+      address: $('#st-addr', bg).value.trim(),
+      lat: picked ? picked.lat : null,
+      lng: picked ? picked.lng : null,
+    });
     closeSheet(bg);
     toast('Loja salva');
     render();
