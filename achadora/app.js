@@ -466,6 +466,21 @@ function importBackup() {
   input.click();
 }
 
+// Carrega o catálogo pronto da Lattafa (hospedado junto do app)
+async function loadSeed(file, label) {
+  try {
+    toast('Carregando ' + label + '…');
+    const res = await fetch('./' + file, { cache: 'no-store' });
+    if (!res.ok) throw new Error('http');
+    const data = await res.json();
+    await DB.importAll(data);
+    toast((data.products || []).length + ' produtos carregados ✨');
+    render();
+  } catch (e) {
+    toast('Não foi possível carregar o catálogo');
+  }
+}
+
 // ---------- navegação ----------
 function setTab(tab) {
   if (tab === 'backup') {
@@ -474,9 +489,18 @@ function setTab(tab) {
       <p class="muted-note">Seus dados ficam só neste aparelho. Exporte de vez em quando pra não perder, e importe ao trocar de celular.</p>
       <button class="btn" id="bk-exp" style="margin-top:14px">⬇️ Exportar backup</button>
       <button class="btn secondary" id="bk-imp" style="margin-top:10px">⬆️ Importar backup</button>
+      <div class="section-title">Catálogos prontos</div>
+      <p class="muted-note">Adiciona perfumes já cadastrados (com foto e dados). Pode rodar mais de uma vez sem duplicar.</p>
+      <button class="btn secondary" id="bk-lattafa" style="margin-top:10px">🌹 Carregar catálogo Lattafa (143 perfumes)</button>
     `);
     $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); closeSheet(bg); });
     $('#bk-imp', bg).addEventListener('click', () => { importBackup(); closeSheet(bg); });
+    $('#bk-lattafa', bg).addEventListener('click', () => {
+      if (confirm('Adicionar 143 perfumes Lattafa ao seu catálogo?')) {
+        loadSeed('seed-lattafa.json', 'Lattafa');
+        closeSheet(bg);
+      }
+    });
     return;
   }
   state.tab = tab;
