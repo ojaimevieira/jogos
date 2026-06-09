@@ -1,5 +1,5 @@
 // Service worker da Achadora — cache simples pra funcionar offline.
-const CACHE = 'achadora-v2';
+const CACHE = 'achadora-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -22,16 +22,15 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Network-first: sempre tenta a versão mais nova quando há internet,
+// e cai pro cache só quando offline. Evita o app ficar preso numa versão antiga.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then((cached) =>
-      cached ||
-      fetch(e.request).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-        return res;
-      }).catch(() => cached)
-    )
+    fetch(e.request).then((res) => {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+      return res;
+    }).catch(() => caches.match(e.request))
   );
 });

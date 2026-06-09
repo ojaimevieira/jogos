@@ -470,14 +470,21 @@ function importBackup() {
 async function loadSeed(file, label) {
   try {
     toast('Carregando ' + label + '…');
-    const res = await fetch('./' + file, { cache: 'no-store' });
-    if (!res.ok) throw new Error('http');
+    const res = await fetch(file + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
+    if (!data.products || !data.products.length) throw new Error('arquivo vazio');
     await DB.importAll(data);
-    toast((data.products || []).length + ' produtos carregados ✨');
-    render();
+    // volta pra aba Catálogo (sem filtros) pra garantir que os produtos apareçam
+    state.tab = 'catalogo';
+    state.category = 'Todos';
+    state.search = '';
+    document.querySelectorAll('.tabbar button').forEach((b) =>
+      b.classList.toggle('active', b.dataset.tab === 'catalogo'));
+    await render();
+    toast(data.products.length + ' perfumes carregados ✨');
   } catch (e) {
-    toast('Não foi possível carregar o catálogo');
+    toast('Erro ao carregar: ' + (e.message || e));
   }
 }
 
