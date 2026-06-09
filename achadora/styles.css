@@ -164,17 +164,45 @@ main { padding: 8px 16px 16px; }
 /* Modal / folha inferior */
 .sheet-bg {
   position: fixed; inset: 0; z-index: 40;
-  background: rgba(0,0,0,0.55);
+  background: rgba(0,0,0,0);
   display: flex; align-items: flex-end;
+  transition: background 0.28s ease;
 }
+.sheet-bg.show { background: rgba(0,0,0,0.55); }
+.sheet-bg.closing { background: rgba(0,0,0,0); }
 .sheet {
   background: var(--surface); width: 100%;
   border-radius: 20px 20px 0 0;
-  padding: 8px 16px calc(24px + env(safe-area-inset-bottom));
+  padding: 0 16px calc(24px + env(safe-area-inset-bottom));
   max-height: 92vh; overflow-y: auto;
   box-shadow: 0 -10px 30px rgba(0,0,0,0.4);
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.sheet .grabber { width: 40px; height: 4px; background: var(--border); border-radius: 999px; margin: 8px auto 12px; }
+.sheet-bg.show .sheet { transform: translateY(0); }
+.sheet-bg.closing .sheet { transform: translateY(100%); }
+
+/* Cabeçalho fixo da folha: alça (arrastar) + botão fechar */
+.sheet-head {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--surface);
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px 0 10px;
+  margin: 0 -16px 6px;
+  cursor: grab;
+  touch-action: none;
+}
+.sheet-head:active { cursor: grabbing; }
+.sheet .grabber { width: 44px; height: 5px; background: var(--border); border-radius: 999px; }
+.sheet-close {
+  position: absolute; right: 12px; top: 6px;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); font-size: 15px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.sheet-close:active { background: var(--border); }
 .sheet h2 { margin: 4px 0 16px; font-size: 19px; }
 
 label.field { display: block; margin-bottom: 14px; }

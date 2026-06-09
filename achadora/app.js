@@ -213,12 +213,83 @@ async function renderStores() {
 function openSheet(html) {
   const bg = document.createElement('div');
   bg.className = 'sheet-bg';
-  bg.innerHTML = `<div class="sheet"><div class="grabber"></div>${html}</div>`;
+  bg.innerHTML = `
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="grabber"></div>
+        <button class="sheet-close" aria-label="Fechar">✕</button>
+      </div>
+      <div class="sheet-body">${html}</div>
+    </div>`;
+  const sheet = $('.sheet', bg);
+
+  // fecha tocando no fundo escuro
   bg.addEventListener('click', (e) => { if (e.target === bg) closeSheet(bg); });
+  // fecha no botão ✕
+  $('.sheet-close', bg).addEventListener('click', () => closeSheet(bg));
+  // fecha no Esc (desktop)
+  const onKey = (e) => { if (e.key === 'Escape') closeSheet(bg); };
+  document.addEventListener('keydown', onKey);
+  bg._onKey = onKey;
+
+  // arrastar pra baixo pra fechar (a partir da alça/cabeçalho)
+  enableDragToClose(bg, sheet);
+
+  // animação de entrada
+  requestAnimationFrame(() => bg.classList.add('show'));
   document.body.appendChild(bg);
+  // segunda chamada de rAF garante a transição mesmo recém-anexado
+  requestAnimationFrame(() => bg.classList.add('show'));
   return bg;
 }
-function closeSheet(bg) { bg.remove(); }
+
+function closeSheet(bg) {
+  if (!bg || bg._closing) return;
+  bg._closing = true;
+  if (bg._onKey) document.removeEventListener('keydown', bg._onKey);
+  bg.classList.remove('show');
+  bg.classList.add('closing');
+  const done = () => bg.remove();
+  bg.addEventListener('transitionend', done, { once: true });
+  setTimeout(done, 320); // fallback se a transição não disparar
+}
+
+// Permite arrastar a folha pra baixo (alça/cabeçalho) e soltar pra fechar
+function enableDragToClose(bg, sheet) {
+  const head = $('.sheet-head', bg);
+  let startY = 0, dy = 0, dragging = false;
+
+  const onStart = (e) => {
+    dragging = true;
+    startY = (e.touches ? e.touches[0].clientY : e.clientY);
+    dy = 0;
+    sheet.style.transition = 'none';
+  };
+  const onMove = (e) => {
+    if (!dragging) return;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY);
+    dy = Math.max(0, y - startY);
+    sheet.style.transform = `translateY(${dy}px)`;
+    if (e.cancelable) e.preventDefault();
+  };
+  const onEnd = () => {
+    if (!dragging) return;
+    dragging = false;
+    sheet.style.transition = '';
+    if (dy > 110) {
+      closeSheet(bg);
+    } else {
+      sheet.style.transform = '';
+    }
+  };
+
+  head.addEventListener('touchstart', onStart, { passive: true });
+  head.addEventListener('touchmove', onMove, { passive: false });
+  head.addEventListener('touchend', onEnd);
+  head.addEventListener('mousedown', onStart);
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onEnd);
+}
 
 // ---------- formulário de loja ----------
 async function openStoreForm(id) {
@@ -268,7 +339,7 @@ async function openProductForm(existing) {
       <label class="field"><span>Marca</span>
         <input class="input" id="p-brand" value="${esc(product.brand || '')}" placeholder="Ex.: Dior"></label>
       <label class="field"><span>Tamanho</span>
-        <input class="input" id="p-volume" value="${esc(product.volume || '')}" placeholder="100ml"></label>
+        <input class="input" id="p-volume" value="${esc(product.volume || '')}" placeholder="100 ml"></label>
     </div>
     <label class="field"><span>Categoria</span>
       <select class="input" id="p-cat">${catOptions}</select></label>
