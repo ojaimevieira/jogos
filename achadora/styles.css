@@ -210,27 +210,27 @@ main { padding: 8px 16px 16px; }
 .sheet-bg.show .sheet { transform: translateY(0); }
 .sheet-bg.closing .sheet { transform: translateY(100%); }
 
-/* Cabeçalho fixo da folha: alça (arrastar) + botão fechar */
+/* Cabeçalho fixo da folha: [espaçador | alça centralizada | botão fechar] */
 .sheet-head {
   position: sticky; top: 0; z-index: 2;
   background: var(--surface);
-  display: flex; align-items: center; justify-content: center;
-  padding: 8px 0 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 10px;
   margin: 0 -16px 6px;
   cursor: grab;
   touch-action: none;
 }
 .sheet-head:active { cursor: grabbing; }
+.sheet-head-spacer { width: 34px; }
 .sheet .grabber { width: 44px; height: 5px; background: var(--border); border-radius: 999px; }
 .sheet-close {
-  position: absolute; right: 12px; top: 6px;
   width: 34px; height: 34px; border-radius: 50%;
   background: var(--surface-2); border: 1px solid var(--border);
-  color: var(--text); font-size: 15px; line-height: 1;
+  color: var(--muted); font-size: 15px;
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer;
+  cursor: pointer; flex-shrink: 0;
 }
-.sheet-close:active { background: var(--border); }
+.sheet-close:active { background: var(--border); color: var(--text); }
 .sheet h2 { margin: 4px 0 16px; font-size: 19px; }
 
 label.field { display: block; margin-bottom: 14px; }

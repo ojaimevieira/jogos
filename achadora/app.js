@@ -27,16 +27,16 @@ function currencyOptions(selected) {
 const state = {
   tab: 'catalogo',     // catalogo | favoritos | lojas
   search: '',
-  brands: [],          // marcas selecionadas (vazio = todas)
-  stores: [],          // ids de loja selecionados (vazio = todas)
-  categories: [],      // categorias selecionadas (vazio = todas)
+  category: 'Todos',   // chip de categoria (rápido)
+  brands: [],          // marcas selecionadas no painel (vazio = todas)
+  stores: [],          // ids de loja selecionados no painel (vazio = todas)
 };
 
 function activeFilterCount() {
-  return state.brands.length + state.stores.length + state.categories.length;
+  return state.brands.length + state.stores.length;
 }
 function clearFilters() {
-  state.brands = []; state.stores = []; state.categories = [];
+  state.brands = []; state.stores = [];
 }
 
 // Marcas distintas presentes no banco (pra preencher o filtro)
@@ -109,8 +109,8 @@ async function renderCatalog() {
   let products = await DB.listProducts();
 
   if (onlyFav) products = products.filter((p) => p.favorite);
+  if (state.category !== 'Todos') products = products.filter((p) => p.category === state.category);
   if (state.brands.length) products = products.filter((p) => state.brands.includes(p.brand || ''));
-  if (state.categories.length) products = products.filter((p) => state.categories.includes(p.category));
   if (state.search.trim()) {
     const q = state.search.trim().toLowerCase();
     products = products.filter((p) =>
@@ -132,11 +132,15 @@ async function renderCatalog() {
   const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const count = activeFilterCount();
 
-  // chips dos filtros ativos (removíveis)
+  // chips de categoria (rolagem horizontal rápida)
+  const catChips = ['Todos', ...CATEGORIES]
+    .map((c) => `<button class="chip ${state.category === c ? 'active' : ''}" data-cat="${c}">${c}</button>`)
+    .join('');
+
+  // chips dos filtros ativos do painel (removíveis)
   const activeChips = [
     ...state.brands.map((b) => `<button class="achip" data-rm="brand" data-val="${esc(b)}">${esc(b)} ✕</button>`),
     ...state.stores.map((id) => `<button class="achip" data-rm="store" data-val="${esc(id)}">🏪 ${esc(storeName[id] || 'Loja')} ✕</button>`),
-    ...state.categories.map((c) => `<button class="achip" data-rm="cat" data-val="${esc(c)}">${esc(c)} ✕</button>`),
   ].join('');
 
   let body;
@@ -165,6 +169,7 @@ async function renderCatalog() {
         🎛️${count ? `<span class="badge">${count}</span>` : ''}
       </button>
     </div>
+    ${onlyFav ? '' : `<div class="chips">${catChips}</div>`}
     ${count ? `<div class="active-filters">${activeChips}<button class="achip clear" data-rm="all">Limpar</button></div>` : ''}
     <main>${body}</main>
     <button class="fab" id="fab" aria-label="Adicionar produto">+</button>
@@ -177,13 +182,14 @@ async function renderCatalog() {
   });
   $('#filter-btn').addEventListener('click', () => openFilterSheet());
   $('#fab').addEventListener('click', () => openProductForm());
+  app.querySelectorAll('.chip').forEach((c) =>
+    c.addEventListener('click', () => { state.category = c.dataset.cat; render(); }));
   app.querySelectorAll('.active-filters .achip').forEach((b) =>
     b.addEventListener('click', () => {
       const { rm, val } = b.dataset;
       if (rm === 'all') clearFilters();
       else if (rm === 'brand') state.brands = state.brands.filter((x) => x !== val);
       else if (rm === 'store') state.stores = state.stores.filter((x) => x !== val);
-      else if (rm === 'cat') state.categories = state.categories.filter((x) => x !== val);
       render();
     }));
   app.querySelectorAll('.card .fav').forEach((b) =>
@@ -196,7 +202,7 @@ async function renderCatalog() {
 async function openFilterSheet() {
   const brands = await distinctBrands();
   const stores = await DB.listStores();
-  const sel = { brands: new Set(state.brands), stores: new Set(state.stores), categories: new Set(state.categories) };
+  const sel = { brands: new Set(state.brands), stores: new Set(state.stores) };
 
   const fchip = (val, label, group) =>
     `<button class="fchip ${sel[group].has(val) ? 'active' : ''}" data-group="${group}" data-val="${esc(val)}">${esc(label)}</button>`;
@@ -205,15 +211,13 @@ async function openFilterSheet() {
     ? `<div class="section-title">Marca</div><div class="fchips">${brands.map((b) => fchip(b, b, 'brands')).join('')}</div>` : '';
   const storeSec = stores.length
     ? `<div class="section-title">Loja</div><div class="fchips">${stores.map((s) => fchip(s.id, s.name, 'stores')).join('')}</div>` : '';
-  const catSec = `<div class="section-title">Categoria</div><div class="fchips">${CATEGORIES.map((c) => fchip(c, c, 'categories')).join('')}</div>`;
 
   const bg = openSheet(`
     <h2>Filtros</h2>
     ${brandSec}
     ${storeSec}
-    ${catSec}
     <div class="row" style="margin-top:20px">
-      <button class="btn secondary" id="f-clear">Limpar tudo</button>
+      <button class="btn secondary" id="f-clear">Limpar</button>
       <button class="btn" id="f-apply">Aplicar</button>
     </div>
   `);
@@ -228,7 +232,6 @@ async function openFilterSheet() {
   $('#f-apply', bg).addEventListener('click', () => {
     state.brands = [...sel.brands];
     state.stores = [...sel.stores];
-    state.categories = [...sel.categories];
     closeSheet(bg);
     render();
   });
@@ -307,6 +310,7 @@ function openSheet(html) {
   bg.innerHTML = `
     <div class="sheet">
       <div class="sheet-head">
+        <div class="sheet-head-spacer"></div>
         <div class="grabber"></div>
         <button class="sheet-close" aria-label="Fechar">✕</button>
       </div>
