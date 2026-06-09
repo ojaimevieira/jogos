@@ -601,12 +601,19 @@ function setTab(tab) {
       <div class="section-title">Catálogos prontos</div>
       <p class="muted-note">Adiciona perfumes já cadastrados (com foto e dados). Pode rodar mais de uma vez sem duplicar.</p>
       <button class="btn secondary" id="bk-lattafa" style="margin-top:10px">🌹 Carregar catálogo Lattafa (143 perfumes)</button>
+      <button class="btn secondary" id="bk-alwataniah" style="margin-top:10px">🌙 Carregar catálogo Al Wataniah (43 perfumes)</button>
     `);
     $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); closeSheet(bg); });
     $('#bk-imp', bg).addEventListener('click', () => { importBackup(); closeSheet(bg); });
     $('#bk-lattafa', bg).addEventListener('click', () => {
       if (confirm('Adicionar 143 perfumes Lattafa ao seu catálogo?')) {
         loadSeed('seed-lattafa.json', 'Lattafa');
+        closeSheet(bg);
+      }
+    });
+    $('#bk-alwataniah', bg).addEventListener('click', () => {
+      if (confirm('Adicionar 43 perfumes Al Wataniah ao seu catálogo?')) {
+        loadSeed('seed-alwataniah.json', 'Al Wataniah');
         closeSheet(bg);
       }
     });
