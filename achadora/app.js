@@ -1,7 +1,28 @@
 // Achadora — lógica da interface (vanilla JS, sem dependências)
 
 const CATEGORIES = ['Perfumes', 'Maquiagem', 'Skincare', 'Cabelo', 'Outros'];
-const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const CURRENCIES = [
+  { code: 'BRL', label: 'R$ Real (BRL)' },
+  { code: 'USD', label: '$ Dólar (USD)' },
+  { code: 'EUR', label: '€ Euro (EUR)' },
+  { code: 'ARS', label: '$ Peso Arg. (ARS)' },
+  { code: 'PYG', label: '₲ Guarani (PYG)' },
+  { code: 'UYU', label: '$ Peso Uru. (UYU)' },
+];
+
+function formatPrice(value, currency) {
+  try {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: currency || 'BRL' }).format(value);
+  } catch {
+    return (currency || '') + ' ' + value.toFixed(2);
+  }
+}
+
+function currencyOptions(selected) {
+  return CURRENCIES.map((c) =>
+    `<option value="${c.code}" ${(selected || 'BRL') === c.code ? 'selected' : ''}>${c.label}</option>`
+  ).join('');
+}
 
 const state = {
   tab: 'catalogo',     // catalogo | favoritos | lojas
@@ -134,7 +155,7 @@ function productCard(p, summary) {
     : `<div class="thumb placeholder">🧴</div>`;
   let price;
   if (summary.best) {
-    price = `<div class="price">${BRL.format(summary.best.value)}
+    price = `<div class="price">${formatPrice(summary.best.value, summary.best.currency)}
       <small>${summary.count > 1 ? `menor de ${summary.count} lojas` : esc(summary.bestStore?.name || 'preço único')}</small></div>`;
   } else {
     price = `<div class="price none">sem preço</div>`;
@@ -259,8 +280,12 @@ async function openProductForm(existing) {
         <option value="">— selecione —</option>${storeOptions}
         <option value="__new">+ Nova loja…</option>
       </select></label>
-    <label class="field"><span>Preço nesta loja</span>
-      <input class="input" id="p-price" inputmode="decimal" placeholder="R$ 0,00"></label>
+    <div class="row">
+      <label class="field"><span>Moeda</span>
+        <select class="input" id="p-currency">${currencyOptions('BRL')}</select></label>
+      <label class="field"><span>Preço nesta loja</span>
+        <input class="input" id="p-price" inputmode="decimal" placeholder="0,00"></label>
+    </div>
     `}
 
     <label class="field"><span>Anotações</span>
@@ -311,8 +336,9 @@ async function openProductForm(existing) {
     if (!existing) {
       const priceVal = parsePrice($('#p-price', bg).value);
       const storeId = $('#p-store', bg).value;
+      const currency = $('#p-currency', bg).value || 'BRL';
       if (priceVal != null) {
-        await DB.savePrice({ productId: saved.id, storeId: storeId || null, value: priceVal, date: Date.now() });
+        await DB.savePrice({ productId: saved.id, storeId: storeId || null, value: priceVal, currency, date: Date.now() });
       }
     }
     closeSheet(bg);
@@ -344,7 +370,7 @@ async function openProductDetail(id) {
             <div class="meta">${new Date(pr.date || pr.createdAt).toLocaleDateString('pt-BR')}</div>
           </div>
           <div style="text-align:right">
-            <div class="val">${BRL.format(pr.value)}</div>
+            <div class="val">${formatPrice(pr.value, pr.currency)}</div>
             ${i === 0 && sorted.length > 1 ? '<div class="best-tag">MAIS BARATO</div>' : ''}
             <button class="btn-ghost" data-delprice="${pr.id}">remover</button>
           </div>
@@ -406,8 +432,12 @@ async function openPriceForm(productId, parentBg) {
         <option value="">— sem loja —</option>${storeOptions}
         <option value="__new">+ Nova loja…</option>
       </select></label>
-    <label class="field"><span>Preço</span>
-      <input class="input" id="pf-price" inputmode="decimal" placeholder="R$ 0,00"></label>
+    <div class="row">
+      <label class="field"><span>Moeda</span>
+        <select class="input" id="pf-currency">${currencyOptions('BRL')}</select></label>
+      <label class="field"><span>Preço</span>
+        <input class="input" id="pf-price" inputmode="decimal" placeholder="0,00"></label>
+    </div>
     <button class="btn" id="pf-save">Salvar preço</button>
   `);
   const sel = $('#pf-store', bg);
@@ -427,7 +457,8 @@ async function openPriceForm(productId, parentBg) {
   $('#pf-save', bg).addEventListener('click', async () => {
     const value = parsePrice($('#pf-price', bg).value);
     if (value == null) return toast('Informe um preço válido');
-    await DB.savePrice({ productId, storeId: sel.value || null, value, date: Date.now() });
+    const currency = $('#pf-currency', bg).value || 'BRL';
+    await DB.savePrice({ productId, storeId: sel.value || null, value, currency, date: Date.now() });
     closeSheet(bg);
     closeSheet(parentBg);
     toast('Preço adicionado');
