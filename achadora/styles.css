@@ -79,9 +79,9 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
-  font-size: 19px;
   display: flex; align-items: center; justify-content: center;
 }
+.filter-btn svg { display: block; }
 .filter-btn.on { border-color: var(--accent); background: rgba(124,92,255,0.12); }
 .filter-btn .badge {
   position: absolute; top: -6px; right: -6px;
