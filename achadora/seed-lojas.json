@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "exportedAt": "2026-06-10",
+  "source": "Lojas (Ciudad del Este)",
+  "stores": [
+    {
+      "id": "store-mega-eletronicos",
+      "name": "Mega Eletrônicos Paraguai",
+      "address": "Monseñor Rodríguez esquina, Cd. del Este 100136, Paraguai"
+    },
+    {
+      "id": "store-shopping-china",
+      "name": "Shopping China Importados",
+      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai"
+    },
+    {
+      "id": "store-atacado-connect",
+      "name": "Atacado Connect",
+      "address": "Av. Adrián Jara, Cd. del Este 100136, Paraguai"
+    },
+    {
+      "id": "store-cellshop",
+      "name": "CellShop",
+      "address": "Av. Carlos Antonio Lopez y, Av. Adrián Jara 7000, Cd. del Este 100136, Paraguai"
+    },
+    {
+      "id": "store-elegancia-company",
+      "name": "Elegancia Company",
+      "address": "Edificio Victoria, Av. Adrián Jara Esquina, Cd. del Este 100136, Paraguai"
+    },
+    {
+      "id": "store-brands-for-less",
+      "name": "Brands For Less Paraguay",
+      "address": "Monseñor Rodríguez, Cd. del Este 100136, Paraguai"
+    }
+  ],
+  "products": [],
+  "prices": []
+}

@@ -265,7 +265,7 @@ const DB = {
     const [existingProducts, existingStores, existingPrices] = await Promise.all([
       getAll('products'), getAll('stores'), getAll('prices'),
     ]);
-    const storeIds = new Set(existingStores.map((s) => s.id));
+    const storeById = Object.fromEntries(existingStores.map((s) => [s.id, s]));
 
     const db = await openDB();
     const t = db.transaction(['products', 'stores', 'prices'], 'readwrite');
@@ -283,8 +283,18 @@ const DB = {
     existingPrices.forEach((pr) => { if (pr.source === 'catalog') PR.delete(pr.id); });
     incomingPrices.forEach((pr) => PR.put({ ...pr, source: 'catalog' }));
 
-    // Lojas: só cria as novas (não apaga lat/lng/endereço de lojas existentes).
-    incomingStores.forEach((s) => { if (!storeIds.has(s.id)) S.put({ ...s, source: 'catalog' }); });
+    // Lojas: o catálogo é dono de nome/endereço; a localização (lat/lng) é do
+    // aparelho (geocodificada ou ajustada pelo usuário). Atualiza nome/endereço,
+    // mas preserva o pino existente — só usa coordenada do catálogo se ele trouxer.
+    incomingStores.forEach((s) => {
+      const prev = storeById[s.id];
+      const merged = { ...s, source: 'catalog' };
+      if (prev && s.lat == null && prev.lat != null) {
+        merged.lat = prev.lat;
+        merged.lng = prev.lng;
+      }
+      S.put(merged);
+    });
 
     await txDone(t);
 
