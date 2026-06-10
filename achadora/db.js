@@ -466,8 +466,8 @@ const DB = {
   // importar nunca destrói cadastros mais novos. Devolve a contagem por coleção.
   async importAll(data) {
     if (!data || typeof data !== 'object') throw new Error('arquivo ilegível');
-    const present = BACKUP_STORES.filter((name) => Array.isArray(data[name]));
-    if (!present.length) throw new Error('não parece um backup da Achadora');
+    const looksLikeBackup = BACKUP_STORES.some((name) => Array.isArray(data[name]));
+    if (!looksLikeBackup) throw new Error('não parece um backup da Achadora');
     const db = await openDB();
     const t = db.transaction(BACKUP_STORES, 'readwrite');
     const counts = {};
