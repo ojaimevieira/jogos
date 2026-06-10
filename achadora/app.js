@@ -1056,6 +1056,12 @@ function popLayer() {
 function _removeTopLayer() {
   const el = navStack.pop();
   if (!el) return;
+  // O Voltar do browser dispara o popstate sem passar por popLayer(), então a
+  // flag _closing precisa ser garantida aqui — senão uma pintura async ainda em
+  // andamento (ex.: paintProductDetail) conclui e altera o DOM do elemento em
+  // transição de fechamento, causando a piscada. Este é o ponto comum a todos
+  // os modos de fechar (botão interno, swipe, gesto e Voltar do browser).
+  el._closing = true;
   if (el._onKey) document.removeEventListener('keydown', el._onKey);
   el.classList.remove('show');
   el.classList.add('closing');
