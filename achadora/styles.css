@@ -336,11 +336,20 @@ textarea.input { resize: vertical; min-height: 64px; }
 .photo-pick {
   width: 100%; aspect-ratio: 4 / 3; border-radius: 14px;
   border: 1.5px dashed var(--border); background: var(--surface-2);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; color: var(--muted); overflow: hidden; margin-bottom: 14px;
+  overflow: hidden; margin-bottom: 14px;
+}
+.photo-inner {
+  width: 100%; height: 100%;
+  display: flex; align-items: stretch;
 }
 .photo-pick img { width: 100%; height: 100%; object-fit: cover; }
-.photo-pick .ic { font-size: 36px; }
+.photo-opt {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; color: var(--muted); background: none; border: 0; cursor: pointer; font-size: 14px;
+}
+.photo-opt:active { background: rgba(255,255,255,0.05); }
+.photo-opt .ic { font-size: 32px; }
+.photo-divider { width: 1px; background: var(--border); margin: 20px 0; flex-shrink: 0; }
 
 .btn {
   width: 100%; border: 0; border-radius: 12px; padding: 14px;
