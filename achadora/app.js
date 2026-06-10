@@ -1376,9 +1376,16 @@ async function openProductForm(existing) {
     <h2>${existing ? 'Editar produto' : 'Novo produto'}</h2>
     <div class="photo-pick" id="photo">
       <div class="photo-inner" id="photo-inner">
-        ${product.image ? `<img src="${product.image}" alt="">` : '<div class="ic">🖼️</div><div>Subir foto</div>'}
+        ${product.image
+          ? `<img src="${product.image}" alt="">`
+          : `<button type="button" class="photo-opt" id="photo-opt-file">
+               <span class="ic">🖼️</span><span>Galeria</span>
+             </button>
+             <div class="photo-divider"></div>
+             <button type="button" class="photo-opt" id="photo-opt-cam">
+               <span class="ic">📷</span><span>Câmera</span>
+             </button>`}
       </div>
-      <button type="button" class="photo-cam" id="photo-cam" aria-label="Tirar foto" title="Tirar foto">📷</button>
     </div>
     <input type="file" id="photo-input" accept="image/*" hidden>
     <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
@@ -1423,19 +1430,21 @@ async function openProductForm(existing) {
     <button class="btn" id="p-save">Salvar</button>
   `);
 
-  // foto — padrão é subir arquivo; o 📷 no canto abre a câmera
+  // foto — dois botões simétricos na caixa (galeria / câmera); com foto, caixa toda troca
   let imageData = product.image || null;
-  let currentFile = null; // o File da última foto escolhida (a IA lê dele)
+  let currentFile = null;
   const aiBtn = $('#ai-fill', bg);
-  const camBtn = $('#photo-cam', bg);
-  $('#photo', bg).addEventListener('click', (e) => {
-    if (e.target.closest('#photo-cam')) return; // o botão da câmera cuida de si
-    $('#photo-input', bg).click();
-  });
-  camBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    $('#camera-input', bg).click();
-  });
+
+  function bindPhotoOpts() {
+    const optFile = $('#photo-opt-file', bg);
+    const optCam = $('#photo-opt-cam', bg);
+    if (optFile) optFile.addEventListener('click', () => $('#photo-input', bg).click());
+    if (optCam) optCam.addEventListener('click', () => $('#camera-input', bg).click());
+    // quando já tem imagem, clicar em qualquer lugar troca pela galeria
+    if (!optFile) $('#photo', bg).addEventListener('click', () => $('#photo-input', bg).click());
+  }
+  bindPhotoOpts();
+
   async function onPhotoChosen(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -1443,7 +1452,7 @@ async function openProductForm(existing) {
     imageData = await compressImage(file);
     $('#photo-inner', bg).innerHTML = `<img src="${imageData}" alt="">`;
     if (aiBtn) aiBtn.disabled = false;
-    if (getAiKey()) runAiFill(); // chave já configurada → tenta preencher na hora
+    if (getAiKey()) runAiFill();
   }
   $('#photo-input', bg).addEventListener('change', onPhotoChosen);
   $('#camera-input', bg).addEventListener('change', onPhotoChosen);

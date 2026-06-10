@@ -334,25 +334,22 @@ textarea.input { resize: vertical; min-height: 64px; }
 
 /* Captura de foto */
 .photo-pick {
-  position: relative;
   width: 100%; aspect-ratio: 4 / 3; border-radius: 14px;
   border: 1.5px dashed var(--border); background: var(--surface-2);
   overflow: hidden; margin-bottom: 14px;
 }
 .photo-inner {
   width: 100%; height: 100%;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; color: var(--muted);
+  display: flex; align-items: stretch;
 }
 .photo-pick img { width: 100%; height: 100%; object-fit: cover; }
-.photo-pick .ic { font-size: 36px; }
-.photo-cam {
-  position: absolute; top: 8px; right: 8px;
-  width: 40px; height: 40px; border-radius: 50%; border: 0;
-  background: rgba(0,0,0,0.55); color: #fff; font-size: 18px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
+.photo-opt {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; color: var(--muted); background: none; border: 0; cursor: pointer; font-size: 14px;
 }
-.photo-cam:active { background: rgba(0,0,0,0.78); }
+.photo-opt:active { background: rgba(255,255,255,0.05); }
+.photo-opt .ic { font-size: 32px; }
+.photo-divider { width: 1px; background: var(--border); margin: 20px 0; flex-shrink: 0; }
 
 .btn {
   width: 100%; border: 0; border-radius: 12px; padding: 14px;
