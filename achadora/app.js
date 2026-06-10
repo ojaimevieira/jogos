@@ -1272,13 +1272,13 @@ const navStack = [];
 const NAV_BASE_Z = 41; // acima da tabbar (25) e do FAB (30)
 function topLayer() { return navStack[navStack.length - 1] || null; }
 
-function sheetHeadHtml(nested) {
-  const back = nested ? '<button class="sheet-back" aria-label="Voltar">‹ Voltar</button>' : '';
-  const close = nested ? '' : '<button class="sheet-close" aria-label="Fechar">✕</button>';
+// Modal sempre fecha com ✕ (mesmo aninhado sobre outra camada): é uma tarefa que
+// se encerra, não um passo de navegação. Quem navega na hierarquia é a página (‹).
+function sheetHeadHtml() {
   return `<div class="sheet-head">
-      <div class="sh-side sh-left">${back}</div>
+      <div class="sh-side sh-left"></div>
       <div class="grabber"></div>
-      <div class="sh-side sh-right">${close}</div>
+      <div class="sh-side sh-right"><button class="sheet-close" aria-label="Fechar">✕</button></div>
     </div>`;
 }
 
@@ -1299,7 +1299,7 @@ function _mountLayer(kind, build, opts = {}, { pushHistory = true } = {}) {
       </div>`;
   } else {
     el.className = 'sheet-bg';
-    el.innerHTML = `<div class="sheet">${sheetHeadHtml(navStack.length > 0)}<div class="sheet-body"></div></div>`;
+    el.innerHTML = `<div class="sheet">${sheetHeadHtml()}<div class="sheet-body"></div></div>`;
     // sob um modal, outro modal não escurece de novo (evita backdrops somados)
     if (below && below._kind === 'sheet') below.classList.add('under');
   }
@@ -1314,8 +1314,6 @@ function _mountLayer(kind, build, opts = {}, { pushHistory = true } = {}) {
     el.addEventListener('click', (e) => { if (e.target === el) popLayer(); });
     const closeBtn = $('.sheet-close', el);
     if (closeBtn) closeBtn.addEventListener('click', () => popLayer());
-    const backBtn = $('.sheet-back', el);
-    if (backBtn) backBtn.addEventListener('click', () => popLayer());
     enableDragToClose(el, $('.sheet', el));
   } else {
     $('.page-back', el).addEventListener('click', () => popLayer());
