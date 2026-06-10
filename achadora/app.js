@@ -194,8 +194,15 @@ async function analyzeProductImage(file) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    if (res.status === 400 || res.status === 403) throw new Error('chave-invalida');
-    throw new Error('falha-' + res.status);
+    // O Gemini devolve { error: { message, status } }; mostramos o motivo real.
+    let detail = '';
+    try { detail = (await res.json())?.error?.message || ''; } catch {}
+    console.error('[IA] HTTP', res.status, detail);
+    if (res.status === 400 && /api.?key|api_key_invalid/i.test(detail)) throw new Error('chave-invalida');
+    if (res.status === 403) throw new Error('chave-invalida');
+    if (res.status === 404) throw new Error('modelo: ' + (detail || res.status));
+    if (res.status === 429) throw new Error('limite: cota da IA esgotada por agora');
+    throw new Error(detail ? `IA ${res.status}: ${detail}` : 'falha-' + res.status);
   }
   const json = await res.json();
   const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -1481,13 +1488,18 @@ async function openProductForm(existing) {
       if (info.gender && gsel && !gsel.value) { gsel.value = info.gender; n++; }
       toast(n ? `Preenchi ${n} campo(s) pela foto — confira ✨` : 'Não consegui ler dados do rótulo');
     } catch (err) {
+      console.error('[IA] falha ao preencher', err);
       const msgs = {
         'sem-chave': 'Configure a chave da IA primeiro',
         'chave-invalida': 'Chave inválida — confira no AI Studio',
         'sem-resposta': 'A IA não retornou dados',
         'resposta-invalida': 'Resposta da IA ilegível',
       };
-      toast(msgs[err.message] || 'Falha ao consultar a IA (sem internet?)');
+      // TypeError = fetch bloqueado (rede/CORS); o resto já vem com motivo real.
+      const fallback = err instanceof TypeError
+        ? 'Rede bloqueou a chamada à IA (CORS/conexão)'
+        : (err.message || 'Falha ao consultar a IA');
+      toast(msgs[err.message] || fallback);
     } finally {
       aiBtn.disabled = false; aiBtn.textContent = label;
     }
