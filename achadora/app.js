@@ -165,6 +165,12 @@ async function analyzeProductImage(file) {
     '- volume: o tamanho como está no frasco. Ex.: "100 ml".',
     '- gender: traduza para exatamente "Masculino", "Feminino" ou "Unissex".',
     '  Sem indício no rótulo, devolva "".',
+    '- price: se houver ETIQUETA DE PREÇO visível, só o número (use ponto',
+    '  decimal, ex.: "45" ou "45.90"). Sem etiqueta de preço, devolva "".',
+    '- currency: a moeda do preço, um destes códigos: BRL, USD, EUR, ARS, PYG,',
+    '  UYU. Pistas: "R$"=BRL, "US$"/"USD"=USD, "€"=EUR, "₲"/"Gs"/"G$"=PYG.',
+    '  Um "$" sozinho, sem outra pista, trate como USD (padrão de Ciudad del',
+    '  Este). Sem preço/moeda visível, devolva "".',
   ].join('\n');
 
   const body = {
@@ -184,8 +190,10 @@ async function analyzeProductImage(file) {
           brand: { type: 'string' },
           volume: { type: 'string' },
           gender: { type: 'string' },
+          price: { type: 'string' },
+          currency: { type: 'string' },
         },
-        required: ['name', 'brand', 'volume', 'gender'],
+        required: ['name', 'brand', 'volume', 'gender', 'price', 'currency'],
       },
     },
   };
@@ -216,11 +224,16 @@ async function analyzeProductImage(file) {
   try { parsed = JSON.parse(text); } catch { throw new Error('resposta-invalida'); }
   // casa o gênero sem depender da capitalização ("masculino" → "Masculino")
   const g = (parsed.gender || '').trim().toLowerCase();
+  // moeda só vale se for um dos códigos que o app conhece
+  const cur = (parsed.currency || '').trim().toUpperCase();
+  const currency = CURRENCIES.some((c) => c.code === cur) ? cur : '';
   return {
     name: (parsed.name || '').trim(),
     brand: (parsed.brand || '').trim(),
     volume: (parsed.volume || '').trim(),
     gender: GENDERS.find((x) => x.toLowerCase() === g) || '',
+    price: (parsed.price || '').trim(),
+    currency,
   };
 }
 
@@ -1491,8 +1504,12 @@ async function openProductForm(existing) {
       if (fillIfEmpty('#p-name', info.name)) n++;
       if (fillIfEmpty('#p-brand', info.brand)) n++;
       if (fillIfEmpty('#p-volume', info.volume)) n++;
+      if (fillIfEmpty('#p-price', info.price)) n++; // campos de preço só existem no cadastro novo
       const gsel = $('#p-gender', bg);
       if (info.gender && gsel && !gsel.value) { gsel.value = info.gender; n++; }
+      // moeda tem default (BRL); se a IA detectou uma, aplica
+      const csel = $('#p-currency', bg);
+      if (info.currency && csel) { csel.value = info.currency; if (info.price) n++; }
       toast(n ? `Preenchi ${n} campo(s) pela foto — confira ✨` : 'Não consegui ler dados do rótulo');
     } catch (err) {
       console.error('[IA] falha ao preencher', err);
