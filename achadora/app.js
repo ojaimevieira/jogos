@@ -770,9 +770,10 @@ async function openListDetail(id) {
     updateTotal();
     persist((l) => { const it = (l.items || []).find((x) => x.productId === productId); if (it) it.qty = r.qty; });
   };
-  bg.querySelectorAll('[data-inc]').forEach((b) => b.addEventListener('click', () => changeQty(b.dataset.inc, +1)));
-  bg.querySelectorAll('[data-dec]').forEach((b) => b.addEventListener('click', () => changeQty(b.dataset.dec, -1)));
-  bg.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', async () => {
+  bg.querySelectorAll('[data-inc]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); changeQty(b.dataset.inc, +1); }));
+  bg.querySelectorAll('[data-dec]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); changeQty(b.dataset.dec, -1); }));
+  bg.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
     const pid = b.dataset.rm;
     const i = model.findIndex((x) => x.productId === pid);
     if (i >= 0) model.splice(i, 1);
@@ -782,6 +783,8 @@ async function openListDetail(id) {
     await persist((l) => { l.items = (l.items || []).filter((x) => x.productId !== pid); });
     if (!model.length) { closeSheet(bg); openListDetail(id); }
   }));
+  bg.querySelectorAll('.li-row[data-row]').forEach((row) =>
+    row.addEventListener('click', () => openProductDetail(row.dataset.row)));
   $('#l-add', bg).addEventListener('click', () => openProductPicker(id, bg));
   $('#l-edit', bg).addEventListener('click', async () => { closeSheet(bg); openListForm(await DB.getList(id)); });
   $('#l-pdf', bg).addEventListener('click', () => exportListPDF(id));

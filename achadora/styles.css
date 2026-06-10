@@ -352,6 +352,7 @@ textarea.input { resize: vertical; min-height: 64px; }
 .li-row {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 0; border-bottom: 1px solid var(--border);
+  cursor: pointer;
 }
 .li-thumb { width: 46px; height: 46px; border-radius: 10px; object-fit: cover; flex: 0 0 auto; }
 .li-thumb.placeholder { display: flex; align-items: center; justify-content: center;
