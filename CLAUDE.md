@@ -22,6 +22,9 @@ O catálogo é publicado junto do app e versionado. Três tipos de registro, tod
   nome: `brand-<slug>` (ex.: `brand-lattafa`, `brand-al-wataniah`). Mesmo nome → mesmo id em
   qualquer aparelho/seed, então nunca duplica.
 - **Loja** — `{ id, name, address, lat, lng }` (lat/lng podem faltar; o app geocodifica).
+  `id` determinístico derivado do nome: `store-<slug>` (ex.: `store-nissei`,
+  `store-mega-eletronicos-paraguai`). Mesmo nome → mesmo id em qualquer aparelho/seed,
+  então nunca duplica (igual à Marca).
 - **Preço** — `{ id, productId, storeId, value, currency, date, createdAt }` (`currency` = `USD`).
 
 ### Arquivos

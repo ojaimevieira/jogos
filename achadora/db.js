@@ -5,7 +5,7 @@
 //   CATÁLOGO (você é o dono; o app só lê; um "Sincronizar" pode sobrescrever):
 //     products  — produtos (perfumes etc.)            { id, name, brandId, ..., source }
 //     brands    — marcas (entidade própria)           { id, name, source }
-//     stores    — lojas                               { id, name, address, lat, lng, source }
+//     stores    — lojas (id determinístico: store-<slug>) { id, name, address, lat, lng, source }
 //     prices    — preços observados                   { id, productId, storeId, value, ..., source }
 //
 //   Marca é entidade de primeira classe (como loja): o produto referencia
@@ -25,14 +25,17 @@
 // sem gatilho, sem lista de "campos a preservar", sem risco de conflito.
 
 const DB_NAME = 'achadora';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
-// Id estável de marca, derivado do nome (sem acento/caixa). Determinístico:
+// Slug a partir do nome (sem acento/caixa). Base dos ids determinísticos:
 // o mesmo nome gera o mesmo id em qualquer aparelho/seed, então o sync e o
-// find-or-create reconciliam sozinhos — sem marca duplicada.
-const brandSlug = (name) => 'brand-' + String(name || '')
+// find-or-create reconciliam sozinhos — sem registro duplicado.
+const slugify = (name) => String(name || '')
   .normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+// Ids estáveis de marca e de loja, derivados do nome. Mesmo nome → mesmo id.
+const brandSlug = (name) => 'brand-' + slugify(name);
+const storeSlug = (name) => 'store-' + slugify(name);
 let _dbPromise = null;
 
 function openDB() {
@@ -81,6 +84,12 @@ function openDB() {
           s.createIndex('name', 'name', { unique: false });
         }
         migrateToV4(tx);
+      }
+
+      // v5: a loja passa a ter id determinístico derivado do nome
+      // (`store-<slug>`), igual à marca. Desfaz lojas duplicadas.
+      if (oldVersion < 5) {
+        migrateToV5(tx);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -138,6 +147,50 @@ function migrateToV4(tx) {
     delete p.brand; // o nome agora vive só na entidade brand
     cur.update(p);
     cur.continue();
+  };
+}
+
+// Migração v4 -> v5: a loja passa a ter id determinístico derivado do nome
+// (`store-<slug>`), igual à marca. Lojas com o mesmo nome (ignorando acento/
+// caixa) colapsam no mesmo id — desfaz as duplicatas criadas quando um cadastro
+// do usuário e o catálogo traziam a mesma loja com ids diferentes. Os preços
+// são re-apontados para o id canônico da loja.
+function migrateToV5(tx) {
+  const storesOS = tx.objectStore('stores');
+  const pricesOS = tx.objectStore('prices');
+  const all = [];
+  storesOS.openCursor().onsuccess = (ev) => {
+    const cur = ev.target.result;
+    if (cur) { all.push(cur.value); cur.continue(); return; }
+
+    // agrupa por id canônico (slug do nome); mescla o melhor de cada campo
+    const canonical = {}; // canonId -> registro mesclado
+    const remap = {};     // idAntigo -> canonId
+    for (const s of all) {
+      const canonId = slugify(s.name) ? storeSlug(s.name) : s.id; // sem nome: mantém id
+      remap[s.id] = canonId;
+      const acc = canonical[canonId] || { id: canonId, name: s.name, address: '', source: 'user' };
+      if (!acc.address && s.address) acc.address = s.address;
+      if (acc.lat == null && s.lat != null) { acc.lat = s.lat; acc.lng = s.lng; } // preserva o pino
+      if (s.source === 'catalog') acc.source = 'catalog';
+      if (s.createdAt && (acc.createdAt == null || s.createdAt < acc.createdAt)) acc.createdAt = s.createdAt;
+      canonical[canonId] = acc;
+    }
+
+    // reescreve as lojas: limpa e grava só os registros canônicos
+    storesOS.clear().onsuccess = () => {
+      Object.values(canonical).forEach((s) => storesOS.put(s));
+    };
+
+    // re-aponta os preços para o id canônico da loja
+    pricesOS.openCursor().onsuccess = (e2) => {
+      const c2 = e2.target.result;
+      if (!c2) return;
+      const pr = c2.value;
+      const canon = remap[pr.storeId];
+      if (canon && canon !== pr.storeId) { pr.storeId = canon; c2.update(pr); }
+      c2.continue();
+    };
   };
 }
 
@@ -283,10 +336,13 @@ const DB = {
     return stores.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   },
   getStore: (id) => get('stores', id),
+  // Find-or-create: sem id, deriva do nome (`store-<slug>`). Mesmo nome → mesmo
+  // id → reconcilia com o catálogo sem duplicar. Editar preserva o id (não
+  // recalcula no rename, pra não órfãos os preços que apontam pra loja).
   saveStore(s) {
     if (!s.id) {
-      s.id = uid();
-      s.createdAt = Date.now();
+      s.id = slugify(s.name) ? storeSlug(s.name) : uid();
+      if (!s.createdAt) s.createdAt = Date.now();
       s.source = s.source || 'user';
     }
     return put('stores', s);

@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "exportedAt": "2026-06-10",
   "source": "Lojas (Ciudad del Este)",
   "stores": [
@@ -11,7 +11,7 @@
       "lng": -54.61010
     },
     {
-      "id": "store-brands-for-less",
+      "id": "store-brands-for-less-paraguay",
       "name": "Brands For Less Paraguay",
       "address": "Monseñor Rodríguez",
       "lat": -25.50995,
@@ -46,7 +46,7 @@
       "lng": -54.60913
     },
     {
-      "id": "store-mega-eletronicos",
+      "id": "store-mega-eletronicos-paraguai",
       "name": "Mega Eletrônicos Paraguai",
       "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
       "lat": -25.50989,
@@ -67,14 +67,14 @@
       "lng": -54.60839
     },
     {
-      "id": "store-shopping-china",
+      "id": "store-shopping-china-importados",
       "name": "Shopping China Importados",
       "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
       "lat": -25.51340,
       "lng": -54.60641
     },
     {
-      "id": "store-visaovip",
+      "id": "store-visaovip-informatica",
       "name": "Visãovip Informática",
       "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
       "lat": -25.51079,
