@@ -1375,9 +1375,13 @@ async function openProductForm(existing) {
   const bg = openSheet(`
     <h2>${existing ? 'Editar produto' : 'Novo produto'}</h2>
     <div class="photo-pick" id="photo">
-      ${product.image ? `<img src="${product.image}" alt="">` : '<div class="ic">📷</div><div>Tirar / escolher foto</div>'}
+      <div class="photo-inner" id="photo-inner">
+        ${product.image ? `<img src="${product.image}" alt="">` : '<div class="ic">🖼️</div><div>Subir foto</div>'}
+      </div>
+      <button type="button" class="photo-cam" id="photo-cam" aria-label="Tirar foto" title="Tirar foto">📷</button>
     </div>
-    <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
+    <input type="file" id="photo-input" accept="image/*" hidden>
+    <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
     <button type="button" class="btn secondary ai-fill" id="ai-fill" disabled>✨ Preencher pela foto</button>
     <div class="ai-hint" id="ai-config">⚙️ Configurar chave da IA</div>
 
@@ -1419,20 +1423,30 @@ async function openProductForm(existing) {
     <button class="btn" id="p-save">Salvar</button>
   `);
 
-  // foto
+  // foto — padrão é subir arquivo; o 📷 no canto abre a câmera
   let imageData = product.image || null;
   let currentFile = null; // o File da última foto escolhida (a IA lê dele)
   const aiBtn = $('#ai-fill', bg);
-  $('#photo', bg).addEventListener('click', () => $('#photo-input', bg).click());
-  $('#photo-input', bg).addEventListener('change', async (e) => {
+  const camBtn = $('#photo-cam', bg);
+  $('#photo', bg).addEventListener('click', (e) => {
+    if (e.target.closest('#photo-cam')) return; // o botão da câmera cuida de si
+    $('#photo-input', bg).click();
+  });
+  camBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    $('#camera-input', bg).click();
+  });
+  async function onPhotoChosen(e) {
     const file = e.target.files[0];
     if (!file) return;
     currentFile = file;
     imageData = await compressImage(file);
-    $('#photo', bg).innerHTML = `<img src="${imageData}" alt="">`;
+    $('#photo-inner', bg).innerHTML = `<img src="${imageData}" alt="">`;
     if (aiBtn) aiBtn.disabled = false;
     if (getAiKey()) runAiFill(); // chave já configurada → tenta preencher na hora
-  });
+  }
+  $('#photo-input', bg).addEventListener('change', onPhotoChosen);
+  $('#camera-input', bg).addEventListener('change', onPhotoChosen);
 
   // IA: lê a foto e preenche só os campos AINDA vazios (você revisa e salva).
   $('#ai-config', bg).addEventListener('click', () => configureAiKey());
