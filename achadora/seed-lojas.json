@@ -1,54 +1,84 @@
 {
-  "version": 5,
+  "version": 6,
   "exportedAt": "2026-06-10",
   "source": "Lojas (Ciudad del Este)",
   "stores": [
     {
-      "id": "store-mega-eletronicos",
-      "name": "Mega Eletrônicos Paraguai",
-      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
-      "lat": -25.50892,
-      "lng": -54.60674
-    },
-    {
-      "id": "store-shopping-china",
-      "name": "Shopping China Importados",
-      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
-      "lat": -25.50913,
-      "lng": -54.60732
-    },
-    {
       "id": "store-atacado-connect",
       "name": "Atacado Connect",
       "address": "Av. Adrián Jara",
-      "lat": -25.51081,
-      "lng": -54.61271
+      "lat": -25.51079,
+      "lng": -54.61010
+    },
+    {
+      "id": "store-brands-for-less",
+      "name": "Brands For Less Paraguay",
+      "address": "Monseñor Rodríguez",
+      "lat": -25.50995,
+      "lng": -54.61089
     },
     {
       "id": "store-cellshop",
       "name": "CellShop",
       "address": "Av. Adrián Jara 7000",
-      "lat": -25.51062,
-      "lng": -54.61212
+      "lat": -25.51045,
+      "lng": -54.61042
+    },
+    {
+      "id": "store-cellshop-outlet",
+      "name": "Cellshop Outlet",
+      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
+      "lat": -25.51017,
+      "lng": -54.61114
     },
     {
       "id": "store-elegancia-company",
       "name": "Elegancia Company",
       "address": "Av. Adrián Jara",
-      "lat": -25.51098,
-      "lng": -54.6133
+      "lat": -25.51107,
+      "lng": -54.61124
     },
     {
-      "id": "store-brands-for-less",
-      "name": "Brands For Less Paraguay",
+      "id": "store-flash-importados",
+      "name": "Flash Importados",
       "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
-      "lat": -25.50934,
-      "lng": -54.60791
+      "lat": -25.51070,
+      "lng": -54.60913
+    },
+    {
+      "id": "store-mega-eletronicos",
+      "name": "Mega Eletrônicos Paraguai",
+      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
+      "lat": -25.50989,
+      "lng": -54.60877
+    },
+    {
+      "id": "store-nissei",
+      "name": "Nissei",
+      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
+      "lat": -25.51108,
+      "lng": -54.60959
     },
     {
       "id": "store-pontocom",
       "name": "Pontocom",
-      "address": "Av. Adrián Jara, Ciudad del Este, Paraguai"
+      "address": "Av. Adrián Jara, Ciudad del Este, Paraguai",
+      "lat": -25.51106,
+      "lng": -54.60839
+    },
+    {
+      "id": "store-shopping-china",
+      "name": "Shopping China Importados",
+      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
+      "lat": -25.51340,
+      "lng": -54.60641
+    },
+    {
+      "id": "store-visaovip",
+      "name": "Visãovip Informática",
+      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
+      "lat": -25.51079,
+      "lng": -54.60911
     }
   ],
   "products": [],
