@@ -574,7 +574,9 @@ textarea.input { resize: vertical; min-height: 64px; }
   border-radius: 14px; overflow: hidden;
   border: 1px solid var(--border); background: var(--surface-2);
 }
-.pick-map { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* isola o stacking context do Leaflet: seus controles internos (z-index alto)
+   ficam contidos no mapa e não vazam por cima dos botões flutuantes (busca/GPS). */
+.pick-map { position: absolute; inset: 0; width: 100%; height: 100%; isolation: isolate; }
 
 /* seletor fullscreen: o mapa é o herói (ocupa a página), a barra de confirmar
    fica embaixo. Sem cantos/borda — o mapa vaza até as bordas da tela. */
@@ -604,13 +606,11 @@ textarea.input { resize: vertical; min-height: 64px; }
 }
 .loc-field:active { background: var(--surface); }
 .loc-field.on { color: var(--green); }
-.loc-field .loc-ic { flex: 0 0 auto; font-size: 16px; }
 .loc-field .loc-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .loc-field .loc-chev { flex: 0 0 auto; opacity: 0.55; font-size: 18px; }
 
 /* barra de região (aba Mapa): escolhe o enquadramento das lojas */
-.region-bar { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
-.region-bar .region-ic { flex: 0 0 auto; font-size: 15px; }
+.region-bar { display: flex; align-items: center; margin: 10px 0; }
 .region-select {
   flex: 1; background: var(--surface-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 10px;

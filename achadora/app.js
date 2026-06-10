@@ -65,7 +65,6 @@ function regionBarHtml() {
   const opts = REGIONS.map((r) =>
     `<option value="${r.id}" ${r.id === cur ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
   return `<div class="region-bar">
-      <span class="region-ic">🌎</span>
       <select class="region-select" id="region-pick" aria-label="Região do mapa">${opts}</select>
     </div>`;
 }
@@ -1768,7 +1767,6 @@ async function openStoreForm(id) {
 
     <div class="section-title">Localização no mapa</div>
     <button type="button" class="loc-field ${picked ? 'on' : ''}" id="loc-field">
-      <span class="loc-ic">🗺️</span>
       <span class="loc-text" id="loc-text">${picked
         ? '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5)
         : 'Toque para definir no mapa'}</span>
