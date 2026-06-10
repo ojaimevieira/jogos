@@ -648,8 +648,8 @@ function setDefaultIcon(L) {
   });
 }
 
-function newMap(L, el, center, zoom) {
-  const map = L.map(el).setView(center, zoom);
+function newMap(L, el, center, zoom, opts = {}) {
+  const map = L.map(el, opts).setView(center, zoom);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '© OpenStreetMap',
   }).addTo(map);
@@ -1493,14 +1493,28 @@ async function openStoreForm(id) {
       <input class="input" id="st-addr" value="${esc(store.address || '')}" placeholder="Rua, bairro, cidade"></label>
 
     <div class="section-title">Localização no mapa</div>
-    <div class="row">
-      <button class="btn secondary" type="button" id="st-find">🔎 Buscar pelo endereço</button>
-      <button class="btn secondary" type="button" id="st-geo">📍 Minha localização</button>
+    <div class="pick-wrap" id="pick-wrap">
+      <div id="pick-map" class="pick-map"></div>
+      <div class="pick-pin-shadow" aria-hidden="true"></div>
+      <div class="pick-pin" aria-hidden="true">
+        <svg width="34" height="46" viewBox="0 0 34 46" xmlns="http://www.w3.org/2000/svg">
+          <path d="M17 1C8.2 1 1 8 1 16.6 1 28 17 45 17 45s16-17 16-28.4C33 8 25.8 1 17 1z"
+                fill="var(--accent)" stroke="#fff" stroke-width="2"/>
+          <circle cx="17" cy="16.5" r="5.5" fill="#fff"/>
+        </svg>
+      </div>
+      <div class="map-overlay top-left">
+        <button class="map-pill" type="button" id="st-find">🔎 Buscar endereço</button>
+      </div>
+      <div class="map-overlay top-right zoom">
+        <button class="map-fab sm" type="button" id="st-zin" aria-label="Aproximar">+</button>
+        <button class="map-fab sm" type="button" id="st-zout" aria-label="Afastar">−</button>
+      </div>
+      <button class="map-fab gps" type="button" id="st-geo" aria-label="Minha localização">📍</button>
+      <div class="pick-readout ${picked ? 'on' : ''}" id="st-coords">${picked
+        ? '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5)
+        : 'Mova o mapa para posicionar o pino'}</div>
     </div>
-    <div id="pick-map" class="pick-map"></div>
-    <div class="muted-note" id="st-coords">${picked
-      ? '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5)
-      : 'Busque pelo endereço, use o GPS, ou toque no mapa pra marcar o ponto.'}</div>
 
     <button class="btn" id="st-save" style="margin-top:14px">Salvar</button>
     ${id ? '<button class="btn danger" id="st-del" style="margin-top:10px">Excluir loja</button>' : ''}
@@ -1512,41 +1526,57 @@ async function openStoreForm(id) {
     try {
       L = await loadLeaflet();
     } catch (e) {
-      const el = $('#pick-map', bg);
-      if (el) el.innerHTML = '<div class="map-fail">Mapa indisponível (sem internet). Você ainda pode salvar a loja sem localização.</div>';
+      const wrap = $('#pick-wrap', bg);
+      if (wrap) wrap.innerHTML = '<div class="map-fail">Mapa indisponível (sem internet). Você ainda pode salvar a loja sem localização.</div>';
       return;
     }
     setDefaultIcon(L);
     const el = $('#pick-map', bg);
+    const wrap = $('#pick-wrap', bg);
     if (!el) return;
     const center = picked ? [picked.lat, picked.lng] : [-14.235, -51.925];
-    const map = newMap(L, el, center, picked ? 15 : 4);
+    const map = newMap(L, el, center, picked ? 16 : 4, { zoomControl: false });
     setTimeout(() => map.invalidateSize(), 250);
 
-    let marker = null;
+    // Padrão "pino fixo": o pino mora no centro da tela e o usuário arrasta o
+    // mapa por baixo. O ponto é lido de map.getCenter(). `active` evita marcar
+    // um ponto falso enquanto o usuário ainda não tocou no mapa.
+    let active = picked != null;
     const updateCoords = () => {
       const c = $('#st-coords', bg);
-      if (c && picked) c.textContent = '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5);
-    };
-    const setPin = (lat, lng, zoom) => {
-      picked = { lat, lng };
-      if (marker) {
-        marker.setLatLng([lat, lng]);
+      if (!c) return;
+      if (active && picked) {
+        c.classList.add('on');
+        c.textContent = '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5);
       } else {
-        marker = L.marker([lat, lng], { draggable: true }).addTo(map);
-        marker.on('dragend', () => { const p = marker.getLatLng(); picked = { lat: p.lat, lng: p.lng }; updateCoords(); });
+        c.classList.remove('on');
+        c.textContent = 'Mova o mapa para posicionar o pino';
       }
-      if (zoom) map.setView([lat, lng], zoom);
-      updateCoords();
     };
-    if (picked) setPin(picked.lat, picked.lng);
-    map.on('click', (e) => setPin(e.latlng.lat, e.latlng.lng));
+    // qualquer gesto do usuário sobre o mapa = intenção de marcar o ponto
+    el.addEventListener('pointerdown', () => { active = true; }, true);
+    map.on('movestart', () => wrap && wrap.classList.add('dragging'));
+    map.on('moveend', () => {
+      wrap && wrap.classList.remove('dragging');
+      if (!active) return;
+      const c = map.getCenter();
+      picked = { lat: c.lat, lng: c.lng };
+      updateCoords();
+    });
 
+    // recentra o mapa num ponto (busca/GPS); o moveend grava em `picked`
+    const goTo = (lat, lng, zoom) => {
+      active = true;
+      map.setView([lat, lng], zoom || Math.max(map.getZoom(), 16));
+    };
+
+    $('#st-zin', bg).addEventListener('click', () => map.zoomIn());
+    $('#st-zout', bg).addEventListener('click', () => map.zoomOut());
     $('#st-geo', bg).addEventListener('click', () => {
       if (!navigator.geolocation) return toast('GPS indisponível');
       toast('Buscando sua localização…');
       navigator.geolocation.getCurrentPosition(
-        (pos) => setPin(pos.coords.latitude, pos.coords.longitude, 16),
+        (pos) => goTo(pos.coords.latitude, pos.coords.longitude, 16),
         () => toast('Não consegui pegar o GPS'),
         { enableHighAccuracy: true, timeout: 10000 });
     });
@@ -1556,7 +1586,7 @@ async function openStoreForm(id) {
       toast('Procurando endereço…');
       const r = await geocodeAddress(q);
       if (!r) return toast('Endereço não encontrado');
-      setPin(r.lat, r.lng, 16);
+      goTo(r.lat, r.lng, 16);
     });
   })();
 
