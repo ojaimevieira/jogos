@@ -1,7 +1,7 @@
 {
-  "name": "Achadora — Catálogo de Garimpo",
+  "name": "Achadora — Fareja preços, acha promoções",
   "short_name": "Achadora",
-  "description": "Cadastre produtos que você encontra nas lojas, compare preços e salve seus favoritos.",
+  "description": "Fareja preços, acha promoções de perfumes em Ciudad del Este.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

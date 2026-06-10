@@ -454,8 +454,8 @@ async function renderCatalog() {
 
   setHtml(app, `
     <header class="app-header">
-      <h1>✨ Achadora</h1>
-      <div class="subtitle">${onlyFav ? 'Seus favoritos' : 'Seu catálogo de garimpo'}</div>
+      <h1>🔍 Achadora</h1>
+      <div class="subtitle">${onlyFav ? 'Seus favoritos' : 'Fareja preços, acha promoções'}</div>
     </header>
     <div class="search-row">
       <div class="search">
