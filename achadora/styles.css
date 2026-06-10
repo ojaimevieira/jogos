@@ -574,9 +574,7 @@ textarea.input { resize: vertical; min-height: 64px; }
   border-radius: 14px; overflow: hidden;
   border: 1px solid var(--border); background: var(--surface-2);
 }
-/* isola o stacking context do Leaflet: seus controles internos (z-index alto)
-   ficam contidos no mapa e não vazam por cima dos botões flutuantes (busca/GPS). */
-.pick-map { position: absolute; inset: 0; width: 100%; height: 100%; isolation: isolate; }
+.pick-map { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 /* seletor fullscreen: o mapa é o herói (ocupa a página), a barra de confirmar
    fica embaixo. Sem cantos/borda — o mapa vaza até as bordas da tela. */
@@ -699,6 +697,9 @@ textarea.input { resize: vertical; min-height: 64px; }
 .list-item .s.noloc { color: var(--muted); opacity: 0.7; }
 
 /* Leaflet dentro do tema escuro: garante que os controles fiquem legíveis */
-.leaflet-container { font: inherit; }
+/* Isola o stacking context de TODO mapa Leaflet: seus panes/controles internos
+   (z-index até ~1000) ficam contidos no container e não vazam por cima da tabbar,
+   da FAB central nem dos botões flutuantes do seletor. */
+.leaflet-container { font: inherit; isolation: isolate; }
 .leaflet-popup-content { font-size: 13px; line-height: 1.5; }
 .leaflet-popup-content a { color: var(--accent); font-weight: 600; text-decoration: none; }
