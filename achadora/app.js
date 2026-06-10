@@ -1295,6 +1295,23 @@ function importBackup() {
   input.click();
 }
 
+// Geocodifica (no aparelho) as lojas que têm endereço mas ainda não têm pino.
+// Respeita o limite do Nominatim (~1 req/s). Retorna quantas foram localizadas.
+async function geocodeMissingStores() {
+  const stores = await DB.listStores();
+  const pending = stores.filter((s) => s.lat == null && s.address);
+  let done = 0;
+  for (const s of pending) {
+    const r = await geocodeAddress(s.address);
+    if (r) {
+      await DB.saveStore({ ...s, lat: r.lat, lng: r.lng });
+      done++;
+    }
+    await new Promise((res) => setTimeout(res, 1100));
+  }
+  return done;
+}
+
 // Sincroniza o catálogo publicado (manifesto catalog.json -> arquivos de produtos).
 // Conflito-zero: só mexe nos registros de catálogo; favoritos, anotações, listas
 // e cadastros do próprio usuário ficam intactos.
@@ -1323,6 +1340,9 @@ async function syncCatalog() {
 
     const result = await DB.syncCatalog(union);
     await DB.setCatalogVersion(manifest.version);
+
+    // resolve endereços -> pino no mapa (no aparelho; o catálogo guarda só o endereço)
+    await geocodeMissingStores();
 
     // volta pra aba Catálogo (sem filtros) pra garantir que os produtos apareçam
     state.tab = 'catalogo';
