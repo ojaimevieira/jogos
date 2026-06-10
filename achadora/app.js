@@ -32,16 +32,19 @@ const state = {
   stores: [],          // ids de loja selecionados no painel (vazio = todas)
   priceMin: null,      // preço mínimo (null = sem limite)
   priceMax: null,      // preço máximo (null = sem limite)
+  priceSort: null,     // null | 'asc' | 'desc'
   lojasView: 'lista',  // lista | mapa
 };
 
 function activeFilterCount() {
   return state.brands.length + state.stores.length +
-    (state.priceMin != null || state.priceMax != null ? 1 : 0);
+    (state.priceMin != null || state.priceMax != null ? 1 : 0) +
+    (state.priceSort != null ? 1 : 0);
 }
 function clearFilters() {
   state.brands = []; state.stores = [];
   state.priceMin = null; state.priceMax = null;
+  state.priceSort = null;
 }
 
 // Marcas distintas presentes no banco (pra preencher o filtro)
@@ -149,6 +152,18 @@ async function renderCatalog() {
     summaries = kept.map((x) => x[1]);
   }
 
+  // ordenação por preço
+  if (state.priceSort) {
+    const paired = products.map((p, i) => [p, summaries[i]]);
+    paired.sort(([, a], [, b]) => {
+      const av = a.best?.value ?? Infinity;
+      const bv = b.best?.value ?? Infinity;
+      return state.priceSort === 'asc' ? av - bv : bv - av;
+    });
+    products = paired.map((x) => x[0]);
+    summaries = paired.map((x) => x[1]);
+  }
+
   const stores = await DB.listStores();
   const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const count = activeFilterCount();
@@ -175,6 +190,7 @@ async function renderCatalog() {
     ...state.brands.map((b) => `<button class="achip" data-rm="brand" data-val="${esc(b)}">${esc(b)} ✕</button>`),
     ...state.stores.map((id) => `<button class="achip" data-rm="store" data-val="${esc(id)}">🏪 ${esc(storeName[id] || 'Loja')} ✕</button>`),
     ...(priceChipLabel ? [`<button class="achip" data-rm="price">💰 ${esc(priceChipLabel)} ✕</button>`] : []),
+    ...(state.priceSort ? [`<button class="achip" data-rm="sort">${state.priceSort === 'asc' ? '↑ Menor preço' : '↓ Maior preço'} ✕</button>`] : []),
   ].join('');
 
   let body;
@@ -225,6 +241,7 @@ async function renderCatalog() {
       else if (rm === 'brand') state.brands = state.brands.filter((x) => x !== val);
       else if (rm === 'store') state.stores = state.stores.filter((x) => x !== val);
       else if (rm === 'price') { state.priceMin = null; state.priceMax = null; }
+      else if (rm === 'sort') { state.priceSort = null; }
       render();
     }));
   app.querySelectorAll('.card .fav').forEach((b) =>
@@ -249,11 +266,16 @@ async function openFilterSheet() {
   const storeSec = stores.length
     ? `<div class="section-title">Loja</div><div class="fchips">${stores.map((s) => fchip(s.id, s.name, 'stores')).join('')}</div>` : '';
 
-  const priceSec = `<div class="section-title">Preço (menor preço do produto)</div>
+  const priceSec = `<div class="section-title">Faixa de preço</div>
     <div class="price-range">
       <input type="number" inputmode="decimal" min="0" step="0.01" id="f-price-min" placeholder="Mín. (R$)" value="${state.priceMin != null ? state.priceMin : ''}" />
       <span class="price-range-sep">—</span>
       <input type="number" inputmode="decimal" min="0" step="0.01" id="f-price-max" placeholder="Máx. (R$)" value="${state.priceMax != null ? state.priceMax : ''}" />
+    </div>
+    <div class="section-title" style="margin-top:14px">Ordenar por preço</div>
+    <div class="fchips">
+      <button class="fchip sort-btn ${state.priceSort === 'asc' ? 'active' : ''}" data-sort="asc">↑ Menor primeiro</button>
+      <button class="fchip sort-btn ${state.priceSort === 'desc' ? 'active' : ''}" data-sort="desc">↓ Maior primeiro</button>
     </div>`;
 
   const bg = openSheet(`
@@ -267,11 +289,19 @@ async function openFilterSheet() {
     </div>
   `);
 
-  bg.querySelectorAll('.fchip').forEach((b) =>
+  let selSort = state.priceSort;
+
+  bg.querySelectorAll('.fchip:not(.sort-btn)').forEach((b) =>
     b.addEventListener('click', () => {
       const { group, val } = b.dataset;
       if (sel[group].has(val)) sel[group].delete(val); else sel[group].add(val);
       b.classList.toggle('active');
+    }));
+  bg.querySelectorAll('.sort-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      const chosen = b.dataset.sort;
+      selSort = selSort === chosen ? null : chosen;
+      bg.querySelectorAll('.sort-btn').forEach((x) => x.classList.toggle('active', x.dataset.sort === selSort));
     }));
   $('#f-clear', bg).addEventListener('click', () => { clearFilters(); closeSheet(bg); render(); });
   $('#f-apply', bg).addEventListener('click', () => {
@@ -285,6 +315,7 @@ async function openFilterSheet() {
     if (state.priceMin != null && state.priceMax != null && state.priceMin > state.priceMax) {
       [state.priceMin, state.priceMax] = [state.priceMax, state.priceMin];
     }
+    state.priceSort = selSort;
     closeSheet(bg);
     render();
   });
