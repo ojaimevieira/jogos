@@ -1,6 +1,6 @@
 // Achadora — lógica da interface (vanilla JS, sem dependências)
 
-const CATEGORIES = ['Perfumes', 'Maquiagem', 'Skincare', 'Cabelo', 'Outros'];
+const CATEGORIES = ['Perfumes'];
 const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
 const CURRENCIES = [
   { code: 'BRL', label: 'R$ Real (BRL)' },
@@ -223,7 +223,7 @@ async function renderCatalog() {
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>${count ? `<span class="badge">${count}</span>` : ''}
       </button>
     </div>
-    ${onlyFav ? '' : `<div class="chips">${catChips}</div>`}
+    ${onlyFav || CATEGORIES.length <= 1 ? '' : `<div class="chips">${catChips}</div>`}
     ${count ? `<div class="active-filters">${activeChips}<button class="achip clear" data-rm="all">Limpar</button></div>` : ''}
     <main>${body}</main>
     <button class="fab" id="fab" aria-label="Adicionar produto">+</button>
