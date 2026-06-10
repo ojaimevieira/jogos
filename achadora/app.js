@@ -2168,31 +2168,45 @@ function openScanMatch(draft, candidates) {
 }
 
 // ---------- backup ----------
+// Carimbo de tempo local até o segundo — cada backup vira um arquivo único
+// (data + hora), então baixar vários no mesmo dia nunca colide.
+function backupStamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
 async function exportBackup() {
   const data = await DB.exportAll();
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `achadora-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `achadora-backup-${backupStamp()}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  toast('Backup exportado');
+  const favs = data.userProducts.filter((u) => u.favorite).length;
+  toast(`Backup salvo: ${data.products.length} produtos · ${favs} favoritos`);
 }
 function importBackup() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = 'application/json';
+  input.accept = 'application/json,.json';
   input.onchange = async () => {
     const file = input.files[0];
     if (!file) return;
+    let data;
     try {
-      const data = JSON.parse(await file.text());
-      await DB.importAll(data);
-      toast('Backup importado ✨');
+      data = JSON.parse(await file.text());
+    } catch (e) {
+      toast('Arquivo corrompido ou incompleto — baixe o backup de novo');
+      return;
+    }
+    try {
+      const counts = await DB.importAll(data);
+      const favs = (data.userProducts || []).filter((u) => u.favorite).length;
+      toast(`Restaurado: ${counts.products} produtos · ${favs} favoritos`);
       render();
     } catch (e) {
-      toast('Arquivo inválido');
+      toast('Falha ao restaurar: ' + (e && e.message ? e.message : 'erro'));
     }
   };
   input.click();

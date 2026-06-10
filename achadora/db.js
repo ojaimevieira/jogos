@@ -27,6 +27,10 @@
 const DB_NAME = 'achadora';
 const DB_VERSION = 5;
 
+// Coleções que entram no backup completo. Fonte ÚNICA usada por exportAll e
+// importAll — acrescentar uma store aqui já a inclui nos dois lados, sem remendo.
+const BACKUP_STORES = ['products', 'brands', 'stores', 'prices', 'lists', 'userProducts', 'meta'];
+
 // Slug a partir do nome (sem acento/caixa). Base dos ids determinísticos:
 // o mesmo nome gera o mesmo id em qualquer aparelho/seed, então o sync e o
 // find-or-create reconciliam sozinhos — sem registro duplicado.
@@ -449,30 +453,32 @@ const DB = {
     return { upserted: incomingProducts.length, removed: removed.length };
   },
 
-  // Backup / restauração (backup COMPLETO — catálogo + dados do usuário)
+  // Backup / restauração (backup COMPLETO — catálogo + dados do usuário).
+  // Itera sobre BACKUP_STORES: a lista de coleções é a única fonte de verdade.
   async exportAll() {
-    const [products, brands, stores, prices, lists, userProducts, meta] = await Promise.all([
-      getAll('products'), getAll('brands'), getAll('stores'), getAll('prices'),
-      getAll('lists'), getAll('userProducts'), getAll('meta'),
-    ]);
-    return {
-      version: DB_VERSION,
-      exportedAt: new Date().toISOString(),
-      products, brands, stores, prices, lists, userProducts, meta,
-    };
+    const all = await Promise.all(BACKUP_STORES.map((name) => getAll(name)));
+    const data = { version: DB_VERSION, exportedAt: new Date().toISOString() };
+    BACKUP_STORES.forEach((name, i) => { data[name] = all[i]; });
+    return data;
   },
-  // Restaura um backup completo — sobrescreve com o estado exato do arquivo.
+  // Restaura um backup: regrava (upsert) cada registro do arquivo numa única
+  // transação. NÃO apaga o que já existe no aparelho — só adiciona/atualiza, então
+  // importar nunca destrói cadastros mais novos. Devolve a contagem por coleção.
   async importAll(data) {
+    if (!data || typeof data !== 'object') throw new Error('arquivo ilegível');
+    const present = BACKUP_STORES.filter((name) => Array.isArray(data[name]));
+    if (!present.length) throw new Error('não parece um backup da Achadora');
     const db = await openDB();
-    const t = db.transaction(['products', 'brands', 'stores', 'prices', 'lists', 'userProducts', 'meta'], 'readwrite');
-    (data.products || []).forEach((p) => t.objectStore('products').put(p));
-    (data.brands || []).forEach((b) => t.objectStore('brands').put(b));
-    (data.stores || []).forEach((s) => t.objectStore('stores').put(s));
-    (data.prices || []).forEach((p) => t.objectStore('prices').put(p));
-    (data.lists || []).forEach((l) => t.objectStore('lists').put(l));
-    (data.userProducts || []).forEach((u) => t.objectStore('userProducts').put(u));
-    (data.meta || []).forEach((m) => t.objectStore('meta').put(m));
-    return txDone(t);
+    const t = db.transaction(BACKUP_STORES, 'readwrite');
+    const counts = {};
+    for (const name of BACKUP_STORES) {
+      const records = Array.isArray(data[name]) ? data[name] : [];
+      const os = t.objectStore(name);
+      records.forEach((rec) => os.put(rec));
+      counts[name] = records.length;
+    }
+    await txDone(t);
+    return counts;
   },
 };
 
