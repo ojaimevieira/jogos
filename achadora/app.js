@@ -1616,7 +1616,8 @@ async function openProductForm(existing, draft = null) {
     <div class="photo-pick" id="photo">
       <div class="photo-inner" id="photo-inner">
         ${product.image
-          ? `<img src="${product.image}" alt="">`
+          ? `<img src="${product.image}" alt="">
+             <button type="button" class="photo-change" id="photo-change">🔄 Trocar foto</button>`
           : `<button type="button" class="photo-opt" id="photo-opt-file">
                <span class="ic">🖼️</span><span>Galeria</span>
              </button>
@@ -1691,8 +1692,15 @@ async function openProductForm(existing, draft = null) {
     const optCam = $('#photo-opt-cam', bg);
     if (optFile) optFile.addEventListener('click', () => $('#photo-input', bg).click());
     if (optCam) optCam.addEventListener('click', () => $('#camera-input', bg).click());
-    // quando já tem imagem, clicar em qualquer lugar troca pela galeria
+    // com foto: botão explícito "Trocar foto" (e a caixa toda também troca pela galeria)
     if (!optFile) $('#photo', bg).addEventListener('click', () => $('#photo-input', bg).click());
+    bindPhotoChange();
+  }
+  // o botão "Trocar foto" sobre a imagem abre a galeria; stopPropagation pra não
+  // disparar duas vezes junto com o clique na caixa.
+  function bindPhotoChange() {
+    const ch = $('#photo-change', bg);
+    if (ch) ch.addEventListener('click', (e) => { e.stopPropagation(); $('#photo-input', bg).click(); });
   }
   bindPhotoOpts();
 
@@ -1701,7 +1709,9 @@ async function openProductForm(existing, draft = null) {
     if (!file) return;
     currentFile = file;
     imageData = await compressImage(file);
-    $('#photo-inner', bg).innerHTML = `<img src="${imageData}" alt="">`;
+    $('#photo-inner', bg).innerHTML = `<img src="${imageData}" alt="">
+      <button type="button" class="photo-change" id="photo-change">🔄 Trocar foto</button>`;
+    bindPhotoChange();
     if (aiBtn) aiBtn.disabled = false;
     if (getAiKey()) runAiFill();
   }
