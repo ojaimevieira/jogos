@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "exportedAt": "2026-06-10",
   "source": "Lojas (Ciudad del Este)",
   "stores": [
@@ -44,6 +44,11 @@
       "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
       "lat": -25.50934,
       "lng": -54.60791
+    },
+    {
+      "id": "store-pontocom",
+      "name": "Pontocom",
+      "address": "Av. Adrián Jara, Ciudad del Este, Paraguai"
     }
   ],
   "products": [],
