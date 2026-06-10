@@ -718,11 +718,13 @@ async function openListDetail(id) {
 async function paintListDetail(bg, id) {
   const list = await DB.getList(id);
   if (!list) { popLayer(); return; }
+  if (bg._closing) return;
   const titleEl = $('.page-title', bg);
   if (titleEl) titleEl.textContent = '🧾 ' + list.name;
   const stores = await DB.listStores();
   const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const { rows } = await computeList(list);
+  if (bg._closing) return;
 
   const itemRows = rows.length
     ? rows.map((r) => `
@@ -1017,8 +1019,7 @@ function _mountLayer(kind, build, opts = {}, { pushHistory = true } = {}) {
   build(el); // preenche conteúdo + handlers (já com o DOM montado)
 
   document.body.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('show'));
-  requestAnimationFrame(() => el.classList.add('show'));
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
   return el;
 }
 
@@ -1376,10 +1377,12 @@ async function openProductDetail(id) {
 async function paintProductDetail(bg, id) {
   const p = await DB.getProduct(id);
   if (!p) { popLayer(); return; }
+  if (bg._closing) return;
   const titleEl = $('.page-title', bg);
   if (titleEl) titleEl.innerHTML = `${esc(p.name)} ${p.favorite ? '❤️' : ''}`;
   const summary = await priceSummary(id);
   const stores = await DB.listStores();
+  if (bg._closing) return;
   const storeMap = Object.fromEntries(stores.map((s) => [s.id, s.name]));
 
   const sorted = [...summary.prices].sort((a, b) => a.value - b.value);
