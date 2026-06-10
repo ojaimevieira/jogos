@@ -30,14 +30,18 @@ const state = {
   category: 'Todos',   // chip de categoria (rápido)
   brands: [],          // marcas selecionadas no painel (vazio = todas)
   stores: [],          // ids de loja selecionados no painel (vazio = todas)
+  priceMin: null,      // preço mínimo (null = sem limite)
+  priceMax: null,      // preço máximo (null = sem limite)
   lojasView: 'lista',  // lista | mapa
 };
 
 function activeFilterCount() {
-  return state.brands.length + state.stores.length;
+  return state.brands.length + state.stores.length +
+    (state.priceMin != null || state.priceMax != null ? 1 : 0);
 }
 function clearFilters() {
   state.brands = []; state.stores = [];
+  state.priceMin = null; state.priceMax = null;
 }
 
 // Marcas distintas presentes no banco (pra preencher o filtro)
@@ -130,6 +134,21 @@ async function renderCatalog() {
     summaries = kept.map((x) => x[1]);
   }
 
+  // filtro por faixa de preço: usa o menor preço cadastrado do produto
+  if (state.priceMin != null || state.priceMax != null) {
+    const kept = products
+      .map((p, i) => [p, summaries[i]])
+      .filter(([, s]) => {
+        if (!s.best) return false; // sem preço não entra na faixa
+        const v = s.best.value;
+        if (state.priceMin != null && v < state.priceMin) return false;
+        if (state.priceMax != null && v > state.priceMax) return false;
+        return true;
+      });
+    products = kept.map((x) => x[0]);
+    summaries = kept.map((x) => x[1]);
+  }
+
   const stores = await DB.listStores();
   const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const count = activeFilterCount();
@@ -145,9 +164,17 @@ async function renderCatalog() {
     .join('');
 
   // chips dos filtros ativos do painel (removíveis)
+  const priceChipLabel = (state.priceMin != null || state.priceMax != null)
+    ? (state.priceMin != null && state.priceMax != null
+        ? `${formatPrice(state.priceMin)} – ${formatPrice(state.priceMax)}`
+        : (state.priceMin != null
+            ? `≥ ${formatPrice(state.priceMin)}`
+            : `≤ ${formatPrice(state.priceMax)}`))
+    : null;
   const activeChips = [
     ...state.brands.map((b) => `<button class="achip" data-rm="brand" data-val="${esc(b)}">${esc(b)} ✕</button>`),
     ...state.stores.map((id) => `<button class="achip" data-rm="store" data-val="${esc(id)}">🏪 ${esc(storeName[id] || 'Loja')} ✕</button>`),
+    ...(priceChipLabel ? [`<button class="achip" data-rm="price">💰 ${esc(priceChipLabel)} ✕</button>`] : []),
   ].join('');
 
   let body;
@@ -197,6 +224,7 @@ async function renderCatalog() {
       if (rm === 'all') clearFilters();
       else if (rm === 'brand') state.brands = state.brands.filter((x) => x !== val);
       else if (rm === 'store') state.stores = state.stores.filter((x) => x !== val);
+      else if (rm === 'price') { state.priceMin = null; state.priceMax = null; }
       render();
     }));
   app.querySelectorAll('.card .fav').forEach((b) =>
@@ -221,10 +249,18 @@ async function openFilterSheet() {
   const storeSec = stores.length
     ? `<div class="section-title">Loja</div><div class="fchips">${stores.map((s) => fchip(s.id, s.name, 'stores')).join('')}</div>` : '';
 
+  const priceSec = `<div class="section-title">Preço (menor preço do produto)</div>
+    <div class="price-range">
+      <input type="number" inputmode="decimal" min="0" step="0.01" id="f-price-min" placeholder="Mín. (R$)" value="${state.priceMin != null ? state.priceMin : ''}" />
+      <span class="price-range-sep">—</span>
+      <input type="number" inputmode="decimal" min="0" step="0.01" id="f-price-max" placeholder="Máx. (R$)" value="${state.priceMax != null ? state.priceMax : ''}" />
+    </div>`;
+
   const bg = openSheet(`
     <h2>Filtros</h2>
     ${brandSec}
     ${storeSec}
+    ${priceSec}
     <div class="row" style="margin-top:20px">
       <button class="btn secondary" id="f-clear">Limpar</button>
       <button class="btn" id="f-apply">Aplicar</button>
@@ -241,6 +277,14 @@ async function openFilterSheet() {
   $('#f-apply', bg).addEventListener('click', () => {
     state.brands = [...sel.brands];
     state.stores = [...sel.stores];
+    const min = parseFloat($('#f-price-min', bg).value);
+    const max = parseFloat($('#f-price-max', bg).value);
+    state.priceMin = isNaN(min) ? null : min;
+    state.priceMax = isNaN(max) ? null : max;
+    // se inverteram os limites, troca pra não zerar o resultado
+    if (state.priceMin != null && state.priceMax != null && state.priceMin > state.priceMax) {
+      [state.priceMin, state.priceMax] = [state.priceMax, state.priceMin];
+    }
     closeSheet(bg);
     render();
   });
