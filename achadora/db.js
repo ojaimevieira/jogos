@@ -3,9 +3,14 @@
 // Modelo de dados (padrão ouro — separação por DONO do dado):
 //
 //   CATÁLOGO (você é o dono; o app só lê; um "Sincronizar" pode sobrescrever):
-//     products  — produtos (perfumes etc.)            { id, name, brand, ..., source }
+//     products  — produtos (perfumes etc.)            { id, name, brandId, ..., source }
+//     brands    — marcas (entidade própria)           { id, name, source }
 //     stores    — lojas                               { id, name, address, lat, lng, source }
 //     prices    — preços observados                   { id, productId, storeId, value, ..., source }
+//
+//   Marca é entidade de primeira classe (como loja): o produto referencia
+//   `brandId`; o nome vive só na marca (fonte única). A leitura resolve o nome
+//   e devolve `.brand` pronto, então a interface continua lendo `p.brand`.
 //
 //   DADOS DO USUÁRIO (o usuário é o dono; o sync NUNCA toca):
 //     userProducts — favorito + anotação pessoal      { id: productId, favorite, note }
@@ -20,7 +25,14 @@
 // sem gatilho, sem lista de "campos a preservar", sem risco de conflito.
 
 const DB_NAME = 'achadora';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
+
+// Id estável de marca, derivado do nome (sem acento/caixa). Determinístico:
+// o mesmo nome gera o mesmo id em qualquer aparelho/seed, então o sync e o
+// find-or-create reconciliam sozinhos — sem marca duplicada.
+const brandSlug = (name) => 'brand-' + String(name || '')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 let _dbPromise = null;
 
 function openDB() {
@@ -60,6 +72,16 @@ function openDB() {
         }
         migrateToV3(tx);
       }
+
+      // v4: marca vira entidade própria (store `brands`); produtos passam a
+      // referenciar `brandId` em vez de guardar o nome.
+      if (oldVersion < 4) {
+        if (!db.objectStoreNames.contains('brands')) {
+          const s = db.createObjectStore('brands', { keyPath: 'id' });
+          s.createIndex('name', 'name', { unique: false });
+        }
+        migrateToV4(tx);
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -91,6 +113,32 @@ function migrateToV3(tx) {
       cur.continue();
     };
   }
+}
+
+// Migração v3 -> v4: extrai a marca (string) de cada produto para a store
+// `brands` e troca por `brandId`. Marcas iguais (ignorando acento/caixa)
+// colapsam no mesmo id determinístico — desfaz duplicatas que já existissem.
+function migrateToV4(tx) {
+  const brands = tx.objectStore('brands');
+  const seen = new Set();
+  tx.objectStore('products').openCursor().onsuccess = (ev) => {
+    const cur = ev.target.result;
+    if (!cur) return;
+    const p = cur.value;
+    const name = (p.brand || '').trim();
+    if (name) {
+      const id = brandSlug(name);
+      if (!seen.has(id)) {
+        seen.add(id);
+        // a marca herda a origem do produto (catálogo vs. cadastro do usuário)
+        brands.put({ id, name, source: p.source || 'user', createdAt: Date.now(), updatedAt: Date.now() });
+      }
+      p.brandId = id;
+    }
+    delete p.brand; // o nome agora vive só na entidade brand
+    cur.update(p);
+    cur.continue();
+  };
 }
 
 function reqToPromise(req) {
@@ -142,31 +190,38 @@ const uid = () =>
   (crypto.randomUUID && crypto.randomUUID()) ||
   Date.now().toString(36) + Math.random().toString(36).slice(2);
 
-// Junta um produto de catálogo com o estado do usuário (favorito + anotação pessoal),
-// para a interface continuar enxergando `favorite` e `userNote` no mesmo objeto.
-function withUser(p, up) {
+// Junta um produto de catálogo com o estado do usuário (favorito + anotação)
+// e resolve o nome da marca a partir do `brandId` (fonte única na store brands).
+// A interface continua enxergando `favorite`, `userNote` e `brand` no objeto.
+// Mantém fallback ao `p.brand` legado, caso algum registro antigo não migre.
+function withUser(p, up, brandsById) {
   if (!p) return p;
-  return { ...p, favorite: !!(up && up.favorite), userNote: (up && up.note) || '' };
+  const brand = (brandsById && brandsById[p.brandId] && brandsById[p.brandId].name) || p.brand || '';
+  return { ...p, brand, favorite: !!(up && up.favorite), userNote: (up && up.note) || '' };
 }
 
 // ---- API de alto nível usada pela interface ----
 const DB = {
-  // Produtos (sempre devolvidos já com o estado do usuário embutido)
+  // Produtos (já com estado do usuário e nome da marca resolvidos)
   async listProducts() {
-    const [products, ups] = await Promise.all([getAll('products'), getAll('userProducts')]);
+    const [products, ups, brands] = await Promise.all([
+      getAll('products'), getAll('userProducts'), getAll('brands'),
+    ]);
     const byId = Object.fromEntries(ups.map((u) => [u.id, u]));
+    const brandsById = Object.fromEntries(brands.map((b) => [b.id, b]));
     return products
-      .map((p) => withUser(p, byId[p.id]))
+      .map((p) => withUser(p, byId[p.id], brandsById))
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   },
   async getProduct(id) {
     const [p, up] = await Promise.all([get('products', id), get('userProducts', id)]);
-    return withUser(p, up);
+    const b = p && p.brandId ? await get('brands', p.brandId) : null;
+    return withUser(p, up, b ? { [b.id]: b } : null);
   },
-  // Salva os dados intrínsecos do produto. Estado do usuário (favorite/userNote)
-  // é removido aqui de propósito — vive em userProducts.
+  // Salva os dados intrínsecos do produto. `brand` (nome) e estado do usuário
+  // são removidos de propósito: a marca vive como `brandId`, o resto em userProducts.
   saveProduct(p) {
-    const { favorite, userNote, ...rec } = p;
+    const { favorite, userNote, brand, ...rec } = p;
     if (!rec.id) {
       rec.id = uid();
       rec.createdAt = Date.now();
@@ -181,6 +236,33 @@ const DB = {
     await del('userProducts', id).catch(() => {});
     return del('products', id);
   },
+
+  // Marcas (entidade própria)
+  async listBrands() {
+    const brands = await getAll('brands');
+    return brands.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  },
+  getBrand: (id) => get('brands', id),
+  // Encontra a marca pelo nome (id determinístico) ou cria uma nova. Devolve o id.
+  // Mesma grafia ignorando acento/caixa → mesmo id → sem duplicata.
+  async resolveBrand(name) {
+    const clean = (name || '').trim();
+    if (!clean) return null;
+    const id = brandSlug(clean);
+    if (!id || id === 'brand-') return null;
+    const existing = await get('brands', id);
+    if (existing) return id; // já existe: preserva a grafia canônica
+    await put('brands', { id, name: clean, source: 'user', createdAt: Date.now(), updatedAt: Date.now() });
+    return id;
+  },
+  async saveBrand(b) {
+    if (!b.id) b.id = brandSlug(b.name);
+    b.updatedAt = Date.now();
+    if (!b.createdAt) b.createdAt = Date.now();
+    b.source = b.source || 'user';
+    return put('brands', b);
+  },
+  deleteBrand: (id) => del('brands', id),
 
   // Estado do usuário sobre um produto (favorito / anotação pessoal)
   async toggleFavorite(productId) {
@@ -260,18 +342,27 @@ const DB = {
     const incomingProducts = data.products || [];
     const incomingStores = data.stores || [];
     const incomingPrices = data.prices || [];
+    const incomingBrands = data.brands || [];
     const productIds = new Set(incomingProducts.map((p) => p.id));
+    const brandIds = new Set(incomingBrands.map((b) => b.id));
 
-    const [existingProducts, existingStores, existingPrices] = await Promise.all([
-      getAll('products'), getAll('stores'), getAll('prices'),
+    const [existingProducts, existingStores, existingPrices, existingBrands] = await Promise.all([
+      getAll('products'), getAll('stores'), getAll('prices'), getAll('brands'),
     ]);
     const storeById = Object.fromEntries(existingStores.map((s) => [s.id, s]));
 
     const db = await openDB();
-    const t = db.transaction(['products', 'stores', 'prices'], 'readwrite');
+    const t = db.transaction(['products', 'stores', 'prices', 'brands'], 'readwrite');
     const P = t.objectStore('products');
     const S = t.objectStore('stores');
     const PR = t.objectStore('prices');
+    const B = t.objectStore('brands');
+
+    // Marcas: upsert das de catálogo; remove as de catálogo que saíram.
+    incomingBrands.forEach((b) => B.put({ ...b, source: 'catalog' }));
+    existingBrands.forEach((b) => {
+      if (b.source === 'catalog' && !brandIds.has(b.id)) B.delete(b.id);
+    });
 
     // Produtos: upsert dos de catálogo; remove os de catálogo que saíram.
     incomingProducts.forEach((p) => P.put({ ...p, source: 'catalog' }));
@@ -304,21 +395,22 @@ const DB = {
 
   // Backup / restauração (backup COMPLETO — catálogo + dados do usuário)
   async exportAll() {
-    const [products, stores, prices, lists, userProducts, meta] = await Promise.all([
-      getAll('products'), getAll('stores'), getAll('prices'),
+    const [products, brands, stores, prices, lists, userProducts, meta] = await Promise.all([
+      getAll('products'), getAll('brands'), getAll('stores'), getAll('prices'),
       getAll('lists'), getAll('userProducts'), getAll('meta'),
     ]);
     return {
       version: DB_VERSION,
       exportedAt: new Date().toISOString(),
-      products, stores, prices, lists, userProducts, meta,
+      products, brands, stores, prices, lists, userProducts, meta,
     };
   },
   // Restaura um backup completo — sobrescreve com o estado exato do arquivo.
   async importAll(data) {
     const db = await openDB();
-    const t = db.transaction(['products', 'stores', 'prices', 'lists', 'userProducts', 'meta'], 'readwrite');
+    const t = db.transaction(['products', 'brands', 'stores', 'prices', 'lists', 'userProducts', 'meta'], 'readwrite');
     (data.products || []).forEach((p) => t.objectStore('products').put(p));
+    (data.brands || []).forEach((b) => t.objectStore('brands').put(b));
     (data.stores || []).forEach((s) => t.objectStore('stores').put(s));
     (data.prices || []).forEach((p) => t.objectStore('prices').put(p));
     (data.lists || []).forEach((l) => t.objectStore('lists').put(l));
