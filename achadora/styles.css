@@ -351,6 +351,11 @@ textarea.input { resize: vertical; min-height: 64px; }
 .btn.danger { background: #3a1f28; border: 1px solid #6b2740; color: #ff90ab; }
 .btn-ghost { background: none; border: 0; color: var(--accent); font-size: 15px; padding: 6px; }
 
+.ai-fill { margin-bottom: 8px; }
+.ai-fill:disabled { opacity: .5; }
+.ai-hint { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 16px; cursor: pointer; }
+.ai-hint:active { color: var(--text); }
+
 /* Detalhe do produto */
 .detail-hero { width: 100%; aspect-ratio: 1/1; max-height: 320px; object-fit: cover;
   border-radius: var(--radius); background: var(--surface-2); }

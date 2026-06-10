@@ -105,6 +105,111 @@ function compressImage(file, maxSize = 900, quality = 0.72) {
   });
 }
 
+// ---------- IA: autopreenchimento pela foto (Google Gemini / AI Studio) ----------
+// A chave fica só NESTE aparelho (localStorage) — nunca no Git, nunca no bundle.
+// O cadastro é uma ferramenta do dono; o usuário final do catálogo jamais passa
+// por aqui, então a chave não precisa de backend pra ficar protegida. Se um dia
+// outras pessoas cadastrarem, troca-se só a URL por um proxy (Cloudflare Worker).
+const AI_KEY_STORAGE = 'achadora.geminiKey';
+const AI_MODEL = 'gemini-2.0-flash'; // tem visão + saída JSON, generoso no free tier
+
+const getAiKey = () => (localStorage.getItem(AI_KEY_STORAGE) || '').trim();
+function setAiKey(k) {
+  if (k && k.trim()) localStorage.setItem(AI_KEY_STORAGE, k.trim());
+  else localStorage.removeItem(AI_KEY_STORAGE);
+}
+
+// Pergunta/edita a chave do AI Studio (prompt simples, como a "nova loja").
+// Retorna true se o usuário não cancelou.
+function configureAiKey() {
+  const current = getAiKey();
+  const msg = current
+    ? 'Chave do Google AI Studio (Gemini).\nDeixe em branco para remover:'
+    : 'Cole sua chave do Google AI Studio (Gemini).\nPegue em aistudio.google.com → "Get API key".\nEla fica salva só neste aparelho.';
+  const val = prompt(msg, current);
+  if (val === null) return false; // cancelou
+  setAiKey(val);
+  toast(val.trim() ? 'Chave salva neste aparelho ✨' : 'Chave removida');
+  return true;
+}
+
+// Comprime a foto e devolve só o base64 (sem o prefixo data-URL), num tamanho
+// MAIOR que o de armazenamento: rótulo de perfume tem texto miúdo e a leitura
+// melhora com mais resolução. A imagem guardada no produto continua leve.
+async function imageBase64ForAi(file) {
+  const dataUrl = await compressImage(file, 1280, 0.85);
+  return dataUrl.split(',')[1];
+}
+
+// Manda a foto pro Gemini e devolve { name, brand, volume, gender } com o que
+// estiver LEGÍVEL no rótulo. A IA é instruída a reconhecer (logo estilizado,
+// nome em árabe), mas a NÃO inventar: campo sem certeza volta vazio. Lança erro
+// (com código curto) se a chamada falhar — quem chama trata e cai no manual.
+async function analyzeProductImage(file) {
+  const key = getAiKey();
+  if (!key) throw new Error('sem-chave');
+  const data = await imageBase64ForAi(file);
+
+  const prompt = [
+    'Você cataloga perfumes a partir da FOTO da embalagem/frasco.',
+    'Extraia SOMENTE o que está visível e legível. Pode reconhecer logos e',
+    'romanizar texto em árabe, mas NÃO pesquise nem invente: se um campo não dá',
+    'pra ler com certeza, devolva "".',
+    'Campos:',
+    '- name: nome do perfume. Se a concentração aparecer (EDT, EDP, Parfum,',
+    '  Eau Fraiche...), inclua no fim. Ex.: "Asad EDP".',
+    '- brand: a marca, sempre em letras latinas.',
+    '- volume: o tamanho como está no frasco. Ex.: "100 ml".',
+    '- gender: traduza para exatamente "Masculino", "Feminino" ou "Unissex".',
+    '  Sem indício no rótulo, devolva "".',
+  ].join('\n');
+
+  const body = {
+    contents: [{
+      parts: [
+        { text: prompt },
+        { inline_data: { mime_type: 'image/jpeg', data } },
+      ],
+    }],
+    generationConfig: {
+      temperature: 0,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          brand: { type: 'string' },
+          volume: { type: 'string' },
+          gender: { type: 'string' },
+        },
+        required: ['name', 'brand', 'volume', 'gender'],
+      },
+    },
+  };
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    if (res.status === 400 || res.status === 403) throw new Error('chave-invalida');
+    throw new Error('falha-' + res.status);
+  }
+  const json = await res.json();
+  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('sem-resposta');
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { throw new Error('resposta-invalida'); }
+  return {
+    name: (parsed.name || '').trim(),
+    brand: (parsed.brand || '').trim(),
+    volume: (parsed.volume || '').trim(),
+    gender: GENDERS.includes(parsed.gender) ? parsed.gender : '',
+  };
+}
+
 // Resumo de preços de um produto: { best, count } (best = preço mais barato + loja)
 async function priceSummary(productId) {
   const prices = await DB.pricesByProduct(productId);
@@ -1273,6 +1378,8 @@ async function openProductForm(existing) {
       ${product.image ? `<img src="${product.image}" alt="">` : '<div class="ic">📷</div><div>Tirar / escolher foto</div>'}
     </div>
     <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
+    <button type="button" class="btn secondary ai-fill" id="ai-fill" disabled>✨ Preencher pela foto</button>
+    <div class="ai-hint" id="ai-config">⚙️ Configurar chave da IA</div>
 
     <label class="field"><span>Nome do produto *</span>
       <input class="input" id="p-name" value="${esc(product.name)}" placeholder="Ex.: Sauvage EDT"></label>
@@ -1314,13 +1421,54 @@ async function openProductForm(existing) {
 
   // foto
   let imageData = product.image || null;
+  let currentFile = null; // o File da última foto escolhida (a IA lê dele)
+  const aiBtn = $('#ai-fill', bg);
   $('#photo', bg).addEventListener('click', () => $('#photo-input', bg).click());
   $('#photo-input', bg).addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    currentFile = file;
     imageData = await compressImage(file);
     $('#photo', bg).innerHTML = `<img src="${imageData}" alt="">`;
+    if (aiBtn) aiBtn.disabled = false;
+    if (getAiKey()) runAiFill(); // chave já configurada → tenta preencher na hora
   });
+
+  // IA: lê a foto e preenche só os campos AINDA vazios (você revisa e salva).
+  $('#ai-config', bg).addEventListener('click', () => configureAiKey());
+  if (aiBtn) aiBtn.addEventListener('click', runAiFill);
+  async function runAiFill() {
+    if (!currentFile) return toast('Escolha ou tire uma foto primeiro');
+    if (!getAiKey() && (!configureAiKey() || !getAiKey())) return;
+    const label = aiBtn.textContent;
+    aiBtn.disabled = true; aiBtn.textContent = '✨ Lendo a foto…';
+    try {
+      const info = await analyzeProductImage(currentFile);
+      const fillIfEmpty = (sel, val) => {
+        if (!val) return false;
+        const el = $(sel, bg);
+        if (el && !el.value.trim()) { el.value = val; return true; }
+        return false;
+      };
+      let n = 0;
+      if (fillIfEmpty('#p-name', info.name)) n++;
+      if (fillIfEmpty('#p-brand', info.brand)) n++;
+      if (fillIfEmpty('#p-volume', info.volume)) n++;
+      const gsel = $('#p-gender', bg);
+      if (info.gender && gsel && !gsel.value) { gsel.value = info.gender; n++; }
+      toast(n ? `Preenchi ${n} campo(s) pela foto — confira ✨` : 'Não consegui ler dados do rótulo');
+    } catch (err) {
+      const msgs = {
+        'sem-chave': 'Configure a chave da IA primeiro',
+        'chave-invalida': 'Chave inválida — confira no AI Studio',
+        'sem-resposta': 'A IA não retornou dados',
+        'resposta-invalida': 'Resposta da IA ilegível',
+      };
+      toast(msgs[err.message] || 'Falha ao consultar a IA (sem internet?)');
+    } finally {
+      aiBtn.disabled = false; aiBtn.textContent = label;
+    }
+  }
 
   // loja nova inline
   const storeSel = $('#p-store', bg);
