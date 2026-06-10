@@ -991,6 +991,73 @@ async function openProductPicker(listId) {
   renderPick();
 }
 
+// Seletor de marca — a fonte única é a store `brands` (entidade própria, como a
+// loja). Lista as marcas do banco, filtra pela busca e oferece criar uma nova
+// explicitamente quando o texto não casa com nenhuma. Devolve a marca escolhida
+// (objeto { id, name }) ou null (= sem marca) pelo callback `onPick`. Espelha o
+// seletor de produtos + o "+ Nova loja" do formulário.
+async function openBrandPicker(currentId, onPick) {
+  const brands = await DB.listBrands();
+  let q = '';
+
+  const bg = openSheet(`
+    <h2>Marca</h2>
+    <div class="search" style="margin:0 0 10px">
+      <input id="brand-search" placeholder="🔍 Buscar ou criar marca" autocomplete="off">
+    </div>
+    <div class="pick-list" id="brand-pick"></div>
+  `);
+
+  const choose = async (brand) => { await onPick(brand); popLayer(); };
+
+  const renderList = () => {
+    const ql = normBrand(q);
+    const filtered = ql ? brands.filter((b) => normBrand(b.name).includes(ql)) : brands;
+    const hasExact = !!ql && brands.some((b) => normBrand(b.name) === ql);
+    const host = $('#brand-pick', bg);
+
+    // "Sem marca" só quando há uma marca escolhida pra limpar; "Criar" quando o
+    // texto digitado não corresponde exatamente a nenhuma marca existente.
+    const clearRow = currentId
+      ? `<div class="pick-row" data-clear="1">
+           <div class="li-info"><div class="li-name muted">✕ Sem marca</div></div></div>` : '';
+    const createRow = (q.trim() && !hasExact)
+      ? `<div class="pick-row create" data-create="1">
+           <div class="li-info"><div class="li-name">+ Criar marca “${esc(q.trim())}”</div></div>
+           <div class="pick-check">+</div></div>` : '';
+    const rows = filtered.map((b) => `
+      <div class="pick-row ${b.id === currentId ? 'on' : ''}" data-brand="${esc(b.id)}">
+        <div class="li-info"><div class="li-name">${esc(b.name)}</div></div>
+        <div class="pick-check">${b.id === currentId ? '✓' : ''}</div>
+      </div>`).join('');
+
+    host.innerHTML = clearRow + createRow + rows
+      || '<p class="muted-note">Nenhuma marca cadastrada ainda. Digite acima para criar a primeira.</p>';
+
+    const createEl = $('[data-create]', host);
+    if (createEl) createEl.addEventListener('click', async () => {
+      const id = await DB.resolveBrand(q.trim());
+      choose((await DB.getBrand(id)) || { id, name: q.trim() });
+    });
+    const clearEl = $('[data-clear]', host);
+    if (clearEl) clearEl.addEventListener('click', () => choose(null));
+    host.querySelectorAll('[data-brand]').forEach((row) =>
+      row.addEventListener('click', () => choose(brands.find((b) => b.id === row.dataset.brand))));
+  };
+
+  const input = $('#brand-search', bg);
+  input.addEventListener('input', (e) => { q = e.target.value; renderList(); });
+  // Enter cria a marca digitada quando não há correspondência exata
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!q.trim() || brands.some((b) => normBrand(b.name) === normBrand(q))) return;
+    const cr = $('[data-create]', bg);
+    if (cr) cr.click();
+  });
+  renderList();
+}
+
 // Adicionar um produto a uma lista (a partir do detalhe do produto)
 async function openAddToList(productId) {
   const lists = await DB.listLists();
@@ -1401,9 +1468,11 @@ async function openStoreForm(id) {
 async function openProductForm(existing) {
   const product = existing || { name: '', brand: '', category: 'Perfumes', gender: '', volume: '', userNote: '', image: null };
   const stores = await DB.listStores();
-  const brands = await distinctBrands(); // pra sugerir/normalizar a marca e evitar duplicata
+  const brandList = await DB.listBrands(); // entidade-fonte (store `brands`) p/ casar a marca da IA
   const storeOptions = stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
-  const brandOptions = brands.map((b) => `<option value="${esc(b)}"></option>`).join('');
+  // marca escolhida: id da entidade + nome pra exibir. Nome sem id = pendente (vira marca no save).
+  let selectedBrandId = product.brandId || null;
+  let selectedBrandName = product.brand || '';
   const catOptions = CATEGORIES.map((c) => `<option value="${c}" ${product.category === c ? 'selected' : ''}>${c}</option>`).join('');
   const genderOptions = GENDERS.map((g) => `<option value="${g}" ${product.gender === g ? 'selected' : ''}>${g}</option>`).join('');
 
@@ -1431,8 +1500,10 @@ async function openProductForm(existing) {
       <input class="input" id="p-name" value="${esc(product.name)}" placeholder="Ex.: Sauvage EDT"></label>
     <div class="row">
       <label class="field"><span>Marca</span>
-        <input class="input" id="p-brand" list="brand-list" value="${esc(product.brand || '')}" placeholder="Ex.: Dior" autocomplete="off">
-        <datalist id="brand-list">${brandOptions}</datalist></label>
+        <div class="input select-like" id="p-brand" role="button" tabindex="0">
+          <span id="p-brand-label" class="${selectedBrandName ? '' : 'ph'}">${selectedBrandName ? esc(selectedBrandName) : 'Selecionar marca'}</span>
+          <span class="chev">▾</span>
+        </div></label>
       <label class="field"><span>Tamanho</span>
         <input class="input" id="p-volume" value="${esc(product.volume || '')}" placeholder="100 ml"></label>
     </div>
@@ -1511,9 +1582,15 @@ async function openProductForm(existing) {
       };
       let n = 0;
       if (fillIfEmpty('#p-name', info.name)) n++;
-      // marca: mostra a grafia já existente se houver (a unificação real é no save)
-      const brandMatch = brands.find((b) => normBrand(b) === normBrand(info.brand));
-      if (fillIfEmpty('#p-brand', brandMatch || info.brand)) n++;
+      // marca: só preenche se ainda não houver escolha. Casa com a entidade
+      // existente (id determinístico) ou deixa o nome pendente p/ criar no save.
+      if (info.brand && !selectedBrandId && !selectedBrandName) {
+        const match = brandList.find((b) => normBrand(b.name) === normBrand(info.brand));
+        selectedBrandId = match ? match.id : null;
+        selectedBrandName = match ? match.name : info.brand.trim();
+        updateBrandField();
+        n++;
+      }
       if (fillIfEmpty('#p-volume', info.volume)) n++;
       if (fillIfEmpty('#p-price', info.price)) n++; // campos de preço só existem no cadastro novo
       const gsel = $('#p-gender', bg);
@@ -1540,6 +1617,23 @@ async function openProductForm(existing) {
     }
   }
 
+  // marca: seletor sobre a entidade (lista do banco + criar nova). Sem datalist.
+  const brandLabel = $('#p-brand-label', bg);
+  function updateBrandField() {
+    brandLabel.textContent = selectedBrandName || 'Selecionar marca';
+    brandLabel.classList.toggle('ph', !selectedBrandName);
+  }
+  const openBrand = () => openBrandPicker(selectedBrandId, (brand) => {
+    selectedBrandId = brand ? brand.id : null;
+    selectedBrandName = brand ? brand.name : '';
+    updateBrandField();
+  });
+  const brandField = $('#p-brand', bg);
+  brandField.addEventListener('click', openBrand);
+  brandField.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrand(); }
+  });
+
   // loja nova inline
   const storeSel = $('#p-store', bg);
   if (storeSel) storeSel.addEventListener('change', async () => {
@@ -1559,8 +1653,8 @@ async function openProductForm(existing) {
   $('#p-save', bg).addEventListener('click', async () => {
     const name = $('#p-name', bg).value.trim();
     if (!name) return toast('O nome é obrigatório');
-    // marca vira entidade: encontra a existente (por id determinístico) ou cria
-    const brandId = await DB.resolveBrand($('#p-brand', bg).value);
+    // marca já escolhida no seletor (id da entidade); nome pendente vira marca nova aqui
+    const brandId = selectedBrandId || (selectedBrandName ? await DB.resolveBrand(selectedBrandName) : null);
     const saved = await DB.saveProduct({
       ...product,
       name,
