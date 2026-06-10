@@ -72,9 +72,13 @@ Fluxo quando o dono **não** manda os dados:
    várias lojas; com uma ou duas, não compensa).
 3. Adicione essa loja (se nova) + o preço.
 
-**Imagem**: não dá pra baixar a foto direto do Compras Paraguai (mesmo 403). Para manter
-o padrão (base64 JPEG do produto), o ideal é o dono mandar a foto. Se a foto vier de uma
-loja física, ela ficará fora do padrão visual — sinalize isso.
+**Imagem**: o `WebFetch` retorna 403 em **todos** os sites de perfume e e-commerce testados
+(Compras Paraguai, Lattafa oficial, Amazon, Fragrantica, etc.) — não tente buscar imagem
+automaticamente, é perda de tempo. O fluxo correto é:
+
+1. **Peça ao dono uma foto limpa** do produto (fundo branco/neutro = padrão do catálogo).
+2. Se o dono só tiver foto de loja, use-a — mas avise que ficará fora do padrão.
+3. Nunca use foto de loja sem avisar.
 
 Quando faltar dado que a busca não resolve (preço exato, tabela completa de lojas, foto),
 **pergunte ao dono** em vez de chutar.
