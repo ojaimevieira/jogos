@@ -376,7 +376,7 @@ async function openFilterSheet() {
       selSort = selSort === chosen ? null : chosen;
       bg.querySelectorAll('.sort-btn').forEach((x) => x.classList.toggle('active', x.dataset.sort === selSort));
     }));
-  $('#f-clear', bg).addEventListener('click', () => { clearFilters(); popSheet(); render(); });
+  $('#f-clear', bg).addEventListener('click', () => { clearFilters(); popLayer(); render(); });
   $('#f-apply', bg).addEventListener('click', () => {
     state.brands = [...sel.brands];
     state.genders = [...sel.genders];
@@ -390,7 +390,7 @@ async function openFilterSheet() {
       [state.priceMin, state.priceMax] = [state.priceMax, state.priceMin];
     }
     state.priceSort = selSort;
-    popSheet();
+    popLayer();
     render();
   });
 }
@@ -701,25 +701,25 @@ async function openListForm(existing) {
     toast('Lista salva');
     render(); // mantém a página Listas (atrás) em dia
     if (existing) {
-      popSheet(); // volta pro detalhe da lista, que se atualiza no onResume
+      popLayer(); // volta pro detalhe da lista, que se atualiza no onResume
     } else {
-      // troca o formulário pelo detalhe da nova lista (mesma camada)
-      replaceSheet('<div class="detail"></div>', { onResume: (b) => paintListDetail(b, saved.id) });
-      paintListDetail(currentSheet(), saved.id);
+      // troca o formulário (modal) pela página de detalhe da nova lista
+      replaceTop('page', (el) => paintListDetail(el, saved.id), { onResume: (el) => paintListDetail(el, saved.id) });
     }
   });
 }
 
 async function openListDetail(id) {
-  const bg = openSheet('<div class="detail"></div>', { onResume: (b) => paintListDetail(b, id) });
-  await paintListDetail(bg, id);
+  pushPage((el) => paintListDetail(el, id), { onResume: (el) => paintListDetail(el, id) });
 }
 
-// (Re)desenha o detalhe da lista dentro da folha `bg`. Usada na abertura e no
+// (Re)desenha a página de detalhe da lista dentro de `bg`. Usada na abertura e no
 // onResume — ao voltar de um produto ou do seletor, a lista reflete o estado novo.
 async function paintListDetail(bg, id) {
   const list = await DB.getList(id);
-  if (!list) { popSheet(); return; }
+  if (!list) { popLayer(); return; }
+  const titleEl = $('.page-title', bg);
+  if (titleEl) titleEl.textContent = '🧾 ' + list.name;
   const stores = await DB.listStores();
   const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const { rows } = await computeList(list);
@@ -743,9 +743,8 @@ async function paintListDetail(bg, id) {
         </div>`).join('')
     : '<p class="muted-note">Lista vazia. Toque em "Adicionar produtos".</p>';
 
-  $('.sheet-body', bg).innerHTML = `
+  $('.page-body', bg).innerHTML = `
     <div class="detail">
-      <h2>🧾 ${esc(list.name)}</h2>
       <div class="brand">${list.storeId ? '🏪 ' + esc(storeName[list.storeId] || 'Loja') : 'Sem loja definida'}</div>
       <div class="li-list">${itemRows}</div>
       ${rows.length ? `<div class="li-total"><span>Total</span><strong>—</strong></div>` : ''}
@@ -804,7 +803,7 @@ async function paintListDetail(bg, id) {
   $('#l-del', bg).addEventListener('click', async () => {
     if (!confirm('Excluir esta lista?')) return;
     await DB.deleteList(id);
-    popSheet();
+    popLayer();
     toast('Lista excluída');
     render();
   });
@@ -848,7 +847,7 @@ async function openProductPicker(listId) {
   };
   $('#pick-search', bg).addEventListener('input', (e) => { q = e.target.value; renderPick(); });
   // Concluir volta pro detalhe da lista (embaixo na pilha), que se atualiza no onResume
-  $('#pick-done', bg).addEventListener('click', () => popSheet());
+  $('#pick-done', bg).addEventListener('click', () => popLayer());
   renderPick();
 }
 
@@ -867,7 +866,7 @@ async function openAddToList(productId) {
     l.items = l.items || [];
     if (l.items.some((x) => x.productId === productId)) toast('Já está nessa lista');
     else { l.items.push({ productId, qty: 1 }); await DB.saveList(l); toast('Adicionado à lista ✨'); }
-    popSheet();
+    popLayer();
     render(); // atualiza o selo 🧾 na miniatura
   }));
   $('#atl-new', bg).addEventListener('click', async () => {
@@ -876,7 +875,7 @@ async function openAddToList(productId) {
       await DB.saveList({ name: name.trim(), storeId: null, items: [{ productId, qty: 1 }] });
       toast('Lista criada com o produto ✨');
     }
-    popSheet();
+    popLayer();
     render();
   });
 }
@@ -949,15 +948,18 @@ async function exportListPDF(id) {
   else iframe.onload = () => setTimeout(fire, 120);
 }
 
-// ---------- pilha de folhas (navegação em camadas) ----------
-// As folhas (bottom sheets) formam uma PILHA. Cada folha empilha uma entrada no
-// histórico, então o Voltar do navegador/Android fecha sempre a folha do topo
-// (e não sai do app). A folha do topo mostra ✕ (sair) quando é a única, ou
-// ‹ Voltar quando há uma folha-pai. Só o topo escurece o fundo — as de baixo
-// ficam transparentes pra opacidade não se somar. TODO fechamento passa por
-// `popSheet` → histórico → `_removeTopSheet`, mantendo DOM e histórico em sync.
-const sheetStack = [];
-function currentSheet() { return sheetStack[sheetStack.length - 1] || null; }
+// ---------- pilha de navegação (páginas + modais) ----------
+// Toda camada sobreposta é uma PÁGINA (desliza da direita, ‹ voltar, swipe da
+// borda esquerda, opaca — pra navegar na hierarquia: detalhe de produto/lista) ou
+// um MODAL/bottom sheet (sobe de baixo, fundo escurecido, arrasta pra baixo, ✕ —
+// pra tarefas: formulário, filtro, seletor, "adicionar a"). É uma pilha única
+// atrelada ao histórico: o Voltar (inclusive do Android) desempilha o topo, seja
+// página ou modal. TODO fechamento passa por `popLayer` → histórico →
+// `_removeTopLayer`, mantendo DOM e histórico em sync. O flag `_closing` evita que
+// um duplo-toque dispare dois history.back e pule dois níveis de uma vez.
+const navStack = [];
+const NAV_BASE_Z = 41; // acima da tabbar (25) e do FAB (30)
+function topLayer() { return navStack[navStack.length - 1] || null; }
 
 function sheetHeadHtml(nested) {
   const back = nested ? '<button class="sheet-back" aria-label="Voltar">‹ Voltar</button>' : '';
@@ -969,75 +971,98 @@ function sheetHeadHtml(nested) {
     </div>`;
 }
 
-// Abre uma folha nova no topo da pilha. `opts.onResume(bg)` roda quando esta
-// folha volta a ser o topo (uma folha-filha foi fechada) — use pra atualizar
-// o conteúdo sem reabrir.
-function openSheet(html, opts = {}) {
-  const bg = document.createElement('div');
-  bg.className = 'sheet-bg';
-  bg.innerHTML = `<div class="sheet">${sheetHeadHtml(sheetStack.length > 0)}<div class="sheet-body">${html}</div></div>`;
-  const sheet = $('.sheet', bg);
+// Monta e empilha uma camada. `kind`: 'page' | 'sheet'. `build(el)` preenche o
+// corpo e liga os eventos. `pushHistory` é falso só na troca em lugar (replaceTop).
+// `opts.onResume(el)` roda quando a camada volta a ser o topo (uma filha fechou).
+function _mountLayer(kind, build, opts = {}, { pushHistory = true } = {}) {
+  const el = document.createElement('div');
+  const below = topLayer();
+  if (kind === 'page') {
+    el.className = 'page-layer';
+    el.innerHTML = `<div class="page">
+        <header class="page-head">
+          <button class="page-back" aria-label="Voltar">‹</button>
+          <div class="page-title">${esc(opts.title || '')}</div>
+        </header>
+        <div class="page-body"></div>
+      </div>`;
+  } else {
+    el.className = 'sheet-bg';
+    el.innerHTML = `<div class="sheet">${sheetHeadHtml(navStack.length > 0)}<div class="sheet-body"></div></div>`;
+    // sob um modal, outro modal não escurece de novo (evita backdrops somados)
+    if (below && below._kind === 'sheet') below.classList.add('under');
+  }
+  el._kind = kind;
+  el._opts = opts;
+  el.style.zIndex = NAV_BASE_Z + navStack.length;
+  navStack.push(el);
+  if (pushHistory) history.pushState({ navDepth: navStack.length }, '');
 
-  // a folha que estava no topo deixa de escurecer (evita backdrops somados)
-  const below = currentSheet();
-  if (below) below.classList.add('under');
-
-  bg._opts = opts;
-  sheetStack.push(bg);
-  history.pushState({ sheetDepth: sheetStack.length }, '');
-
-  // todos os gestos de fechar voltam um nível pelo histórico
-  bg.addEventListener('click', (e) => { if (e.target === bg) popSheet(); });
-  const closeBtn = $('.sheet-close', bg);
-  if (closeBtn) closeBtn.addEventListener('click', () => popSheet());
-  const backBtn = $('.sheet-back', bg);
-  if (backBtn) backBtn.addEventListener('click', () => popSheet());
-  const onKey = (e) => { if (e.key === 'Escape' && currentSheet() === bg) popSheet(); };
+  // gestos de fechar → voltar um nível pelo histórico
+  if (kind === 'sheet') {
+    el.addEventListener('click', (e) => { if (e.target === el) popLayer(); });
+    const closeBtn = $('.sheet-close', el);
+    if (closeBtn) closeBtn.addEventListener('click', () => popLayer());
+    const backBtn = $('.sheet-back', el);
+    if (backBtn) backBtn.addEventListener('click', () => popLayer());
+    enableDragToClose(el, $('.sheet', el));
+  } else {
+    $('.page-back', el).addEventListener('click', () => popLayer());
+    enableSwipeBack(el);
+  }
+  const onKey = (e) => { if (e.key === 'Escape' && topLayer() === el) popLayer(); };
   document.addEventListener('keydown', onKey);
-  bg._onKey = onKey;
+  el._onKey = onKey;
 
-  enableDragToClose(bg, sheet);
+  build(el); // preenche conteúdo + handlers (já com o DOM montado)
 
-  document.body.appendChild(bg);
-  requestAnimationFrame(() => bg.classList.add('show'));
-  requestAnimationFrame(() => bg.classList.add('show'));
-  return bg;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  requestAnimationFrame(() => el.classList.add('show'));
+  return el;
 }
 
-// Troca o conteúdo da folha do topo SEM empilhar (mesma entrada de histórico).
-// Útil pra "formulário → tela de detalhe" sem virar mais uma camada.
-function replaceSheet(html, opts = {}) {
-  const bg = currentSheet();
-  if (!bg) return openSheet(html, opts);
-  bg._opts = opts;
-  $('.sheet-body', bg).innerHTML = html;
-  const sheet = $('.sheet', bg);
-  if (sheet) sheet.scrollTop = 0;
-  return bg;
+// Abre um modal (bottom sheet). Mantém a assinatura antiga: html + opts.
+function openSheet(html, opts = {}) {
+  return _mountLayer('sheet', (el) => { $('.sheet-body', el).innerHTML = html; }, opts);
 }
 
-// Fecha a folha do topo. Só dispara o histórico; quem remove o DOM é o popstate.
-// O flag `_closing` evita que um duplo-toque dispare dois history.back e pule
-// dois níveis de uma vez.
-function popSheet() {
-  const top = currentSheet();
+// Empurra uma página. `paint(el)` preenche `.page-body` e liga os eventos.
+function pushPage(paint, opts = {}) {
+  return _mountLayer('page', (el) => paint(el), opts);
+}
+
+// Troca a camada do topo no lugar (reaproveita a entrada de histórico, sem novo
+// nível). Serve pra "formulário (modal) → tela de detalhe (página)".
+function replaceTop(kind, build, opts = {}) {
+  const old = navStack.pop();
+  if (old) {
+    if (old._onKey) document.removeEventListener('keydown', old._onKey);
+    old.remove();
+  }
+  return _mountLayer(kind, build, opts, { pushHistory: false });
+}
+
+// Fecha o topo. Só dispara o histórico; quem remove o DOM é o popstate.
+function popLayer() {
+  const top = topLayer();
   if (!top || top._closing) return;
   top._closing = true;
   history.back();
 }
 
-// Remoção real da folha do topo — chamado exclusivamente pelo popstate.
-function _removeTopSheet() {
-  const bg = sheetStack.pop();
-  if (!bg) return;
-  if (bg._onKey) document.removeEventListener('keydown', bg._onKey);
-  bg.classList.remove('show');
-  bg.classList.add('closing');
-  const done = () => bg.remove();
-  bg.addEventListener('transitionend', done, { once: true });
-  setTimeout(done, 320); // fallback se a transição não disparar
-  // a nova folha do topo volta a escurecer e é "retomada" (atualiza o conteúdo)
-  const top = currentSheet();
+// Remoção real do topo — chamado exclusivamente pelo popstate.
+function _removeTopLayer() {
+  const el = navStack.pop();
+  if (!el) return;
+  if (el._onKey) document.removeEventListener('keydown', el._onKey);
+  el.classList.remove('show');
+  el.classList.add('closing');
+  const done = () => el.remove();
+  el.addEventListener('transitionend', done, { once: true });
+  setTimeout(done, 360); // fallback se a transição não disparar
+  // a nova camada do topo é "retomada" (atualiza o conteúdo) e volta a escurecer
+  const top = topLayer();
   if (top) {
     top.classList.remove('under');
     if (top._opts && typeof top._opts.onResume === 'function') top._opts.onResume(top);
@@ -1045,8 +1070,48 @@ function _removeTopSheet() {
 }
 
 window.addEventListener('popstate', () => {
-  if (sheetStack.length) _removeTopSheet();
+  if (navStack.length) _removeTopLayer();
 });
+
+// Swipe da borda esquerda pra voltar (gesto padrão de páginas no mobile).
+function enableSwipeBack(el) {
+  let startX = 0, startY = 0, dx = 0, tracking = false, decided = false, horizontal = false;
+  const onStart = (e) => {
+    const t = e.touches ? e.touches[0] : e;
+    if (t.clientX > 28) return; // só começa bem na borda esquerda
+    tracking = true; decided = false; horizontal = false;
+    startX = t.clientX; startY = t.clientY; dx = 0;
+    el.style.transition = 'none';
+  };
+  const onMove = (e) => {
+    if (!tracking) return;
+    const t = e.touches ? e.touches[0] : e;
+    const mx = t.clientX - startX, my = t.clientY - startY;
+    if (!decided) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      decided = true;
+      horizontal = Math.abs(mx) > Math.abs(my);
+      if (!horizontal) { tracking = false; el.style.transition = ''; return; } // é scroll
+    }
+    dx = Math.max(0, mx);
+    el.style.transform = `translateX(${dx}px)`;
+    if (e.cancelable) e.preventDefault();
+  };
+  const onEnd = () => {
+    if (!tracking) return;
+    tracking = false;
+    el.style.transition = '';
+    if (horizontal && dx > 90) {
+      el.style.transform = 'translateX(100%)';
+      popLayer();
+    } else {
+      el.style.transform = '';
+    }
+  };
+  el.addEventListener('touchstart', onStart, { passive: true });
+  el.addEventListener('touchmove', onMove, { passive: false });
+  el.addEventListener('touchend', onEnd);
+}
 
 // Permite arrastar a folha pra baixo (alça/cabeçalho) e soltar pra fechar
 function enableDragToClose(bg, sheet) {
@@ -1072,7 +1137,7 @@ function enableDragToClose(bg, sheet) {
     sheet.style.transition = '';
     if (dy > 110) {
       sheet.style.transform = 'translateY(100%)'; // continua deslizando pra baixo
-      popSheet();
+      popLayer();
     } else {
       sheet.style.transform = '';
     }
@@ -1175,13 +1240,13 @@ async function openStoreForm(id) {
       lat: picked ? picked.lat : null,
       lng: picked ? picked.lng : null,
     });
-    popSheet();
+    popLayer();
     toast('Loja salva');
     render();
   });
   if (id) $('#st-del', bg).addEventListener('click', async () => {
     await DB.deleteStore(id);
-    popSheet();
+    popLayer();
     toast('Loja excluída');
     render();
   });
@@ -1289,7 +1354,7 @@ async function openProductForm(existing) {
         await DB.savePrice({ productId: saved.id, storeId: storeId || null, value: priceVal, currency, date: Date.now() });
       }
     }
-    popSheet(); // volta pro detalhe (se veio de Editar) ou pra página, que se atualizam
+    popLayer(); // volta pro detalhe (se veio de Editar) ou pra página, que se atualizam
     toast('Produto salvo ✨');
     render();
   });
@@ -1303,15 +1368,16 @@ function parsePrice(str) {
 
 // ---------- detalhe do produto + tabela de preços ----------
 async function openProductDetail(id) {
-  const bg = openSheet('<div class="detail"></div>', { onResume: (b) => paintProductDetail(b, id) });
-  await paintProductDetail(bg, id);
+  pushPage((el) => paintProductDetail(el, id), { onResume: (el) => paintProductDetail(el, id) });
 }
 
-// (Re)desenha o detalhe do produto dentro da folha `bg`. Usada na abertura e no
-// onResume — voltar do formulário/preço reflete favoritos, edições e preços novos.
+// (Re)desenha a página de detalhe do produto dentro de `bg`. Usada na abertura e
+// no onResume — voltar do formulário/preço reflete favoritos, edições e preços novos.
 async function paintProductDetail(bg, id) {
   const p = await DB.getProduct(id);
-  if (!p) { popSheet(); return; }
+  if (!p) { popLayer(); return; }
+  const titleEl = $('.page-title', bg);
+  if (titleEl) titleEl.innerHTML = `${esc(p.name)} ${p.favorite ? '❤️' : ''}`;
   const summary = await priceSummary(id);
   const stores = await DB.listStores();
   const storeMap = Object.fromEntries(stores.map((s) => [s.id, s.name]));
@@ -1336,10 +1402,9 @@ async function paintProductDetail(bg, id) {
     ? `<img class="detail-hero" src="${p.image}" alt="">`
     : `<div class="detail-hero placeholder">🧴</div>`;
 
-  $('.sheet-body', bg).innerHTML = `
+  $('.page-body', bg).innerHTML = `
     <div class="detail">
       ${hero}
-      <h2>${esc(p.name)} ${p.favorite ? '❤️' : ''}</h2>
       <div class="brand">${esc(p.brand || '—')}</div>
       <div>
         <span class="tag">${esc(p.category || 'Outros')}</span>
@@ -1367,7 +1432,7 @@ async function paintProductDetail(bg, id) {
   $('#del-btn', bg).addEventListener('click', async () => {
     if (!confirm('Excluir este produto e seus preços?')) return;
     await DB.deleteProduct(id);
-    popSheet();
+    popLayer();
     toast('Produto excluído');
     render();
   });
@@ -1417,7 +1482,7 @@ async function openPriceForm(productId) {
     if (value == null) return toast('Informe um preço válido');
     const currency = $('#pf-currency', bg).value || 'BRL';
     await DB.savePrice({ productId, storeId: sel.value || null, value, currency, date: Date.now() });
-    popSheet(); // volta pro detalhe do produto, que repinta a tabela no onResume
+    popLayer(); // volta pro detalhe do produto, que repinta a tabela no onResume
     toast('Preço adicionado');
   });
 }
@@ -1530,9 +1595,9 @@ function setTab(tab) {
       <button class="btn secondary" id="bk-exp" style="margin-top:10px">⬇️ Exportar backup</button>
       <button class="btn secondary" id="bk-imp" style="margin-top:10px">⬆️ Importar backup</button>
     `);
-    $('#bk-sync', bg).addEventListener('click', () => { syncCatalog(); popSheet(); });
-    $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); popSheet(); });
-    $('#bk-imp', bg).addEventListener('click', () => { importBackup(); popSheet(); });
+    $('#bk-sync', bg).addEventListener('click', () => { syncCatalog(); popLayer(); });
+    $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); popLayer(); });
+    $('#bk-imp', bg).addEventListener('click', () => { importBackup(); popLayer(); });
     return;
   }
   state.tab = tab;
