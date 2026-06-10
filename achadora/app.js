@@ -354,10 +354,7 @@ function productCard(p, summary, inList = false) {
 }
 
 async function toggleFav(id) {
-  const p = await DB.getProduct(id);
-  if (!p) return;
-  p.favorite = !p.favorite;
-  await DB.saveProduct(p);
+  await DB.toggleFavorite(id);
   render();
 }
 
@@ -1047,7 +1044,7 @@ async function openStoreForm(id) {
 
 // ---------- formulário de produto ----------
 async function openProductForm(existing) {
-  const product = existing || { name: '', brand: '', category: 'Perfumes', volume: '', notes: '', image: null };
+  const product = existing || { name: '', brand: '', category: 'Perfumes', volume: '', userNote: '', image: null };
   const stores = await DB.listStores();
   const storeOptions = stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   const catOptions = CATEGORIES.map((c) => `<option value="${c}" ${product.category === c ? 'selected' : ''}>${c}</option>`).join('');
@@ -1086,7 +1083,7 @@ async function openProductForm(existing) {
     `}
 
     <label class="field"><span>Anotações</span>
-      <textarea class="input" id="p-notes" placeholder="Cheirou bem, promoção, etc.">${esc(product.notes || '')}</textarea></label>
+      <textarea class="input" id="p-notes" placeholder="Cheirou bem, promoção, etc.">${esc(product.userNote || '')}</textarea></label>
 
     <button class="btn" id="p-save">Salvar</button>
   `);
@@ -1126,9 +1123,10 @@ async function openProductForm(existing) {
       brand: $('#p-brand', bg).value.trim(),
       volume: $('#p-volume', bg).value.trim(),
       category: $('#p-cat', bg).value,
-      notes: $('#p-notes', bg).value.trim(),
       image: imageData,
     });
+    // anotação pessoal vive separada do catálogo (não é tocada por sync)
+    await DB.setUserNote(saved.id, $('#p-notes', bg).value.trim());
     // preço inicial (só no cadastro novo)
     if (!existing) {
       const priceVal = parsePrice($('#p-price', bg).value);
@@ -1187,7 +1185,8 @@ async function openProductDetail(id) {
         <span class="tag">${esc(p.category || 'Outros')}</span>
         ${p.volume ? `<span class="tag">${esc(p.volume)}</span>` : ''}
       </div>
-      ${p.notes ? `<p class="muted-note" style="margin-top:12px">📝 ${esc(p.notes)}</p>` : ''}
+      ${p.notes ? `<p class="muted-note" style="margin-top:12px">ℹ️ ${esc(p.notes)}</p>` : ''}
+      ${p.userNote ? `<p class="muted-note" style="margin-top:6px">📝 ${esc(p.userNote)}</p>` : ''}
 
       <div class="section-title">Comparativo de preços</div>
       <div class="price-table">${priceRows}</div>
@@ -1296,15 +1295,35 @@ function importBackup() {
   input.click();
 }
 
-// Carrega o catálogo pronto da Lattafa (hospedado junto do app)
-async function loadSeed(file, label) {
+// Sincroniza o catálogo publicado (manifesto catalog.json -> arquivos de produtos).
+// Conflito-zero: só mexe nos registros de catálogo; favoritos, anotações, listas
+// e cadastros do próprio usuário ficam intactos.
+async function syncCatalog() {
   try {
-    toast('Carregando ' + label + '…');
-    const res = await fetch(file + '?t=' + Date.now(), { cache: 'no-store' });
+    toast('Sincronizando…');
+    const res = await fetch('catalog.json?t=' + Date.now(), { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    if (!data.products || !data.products.length) throw new Error('arquivo vazio');
-    await DB.mergeCatalog(data);
+    const manifest = await res.json();
+    const local = await DB.getCatalogVersion();
+    if ((manifest.version || 0) <= local) {
+      toast('Catálogo já está atualizado ✓');
+      return;
+    }
+
+    // baixa todos os arquivos do manifesto e junta tudo numa união só
+    const union = { products: [], stores: [], prices: [] };
+    for (const src of manifest.sources || []) {
+      const r = await fetch(src.file + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' em ' + src.file);
+      const data = await r.json();
+      union.products.push(...(data.products || []));
+      union.stores.push(...(data.stores || []));
+      union.prices.push(...(data.prices || []));
+    }
+
+    const result = await DB.syncCatalog(union);
+    await DB.setCatalogVersion(manifest.version);
+
     // volta pra aba Catálogo (sem filtros) pra garantir que os produtos apareçam
     state.tab = 'catalogo';
     clearFilters();
@@ -1312,9 +1331,11 @@ async function loadSeed(file, label) {
     document.querySelectorAll('.tabbar button').forEach((b) =>
       b.classList.toggle('active', b.dataset.tab === 'catalogo'));
     await render();
-    toast(data.products.length + ' perfumes carregados ✨');
+
+    const extra = result.removed ? ` · ${result.removed} removido(s)` : '';
+    toast(`Catálogo atualizado ✨ ${result.upserted} produto(s)${extra}`);
   } catch (e) {
-    toast('Erro ao carregar: ' + (e.message || e));
+    toast('Erro ao sincronizar: ' + (e.message || e));
   }
 }
 
@@ -1322,29 +1343,18 @@ async function loadSeed(file, label) {
 function setTab(tab) {
   if (tab === 'backup') {
     const bg = openSheet(`
-      <h2>Backup dos dados</h2>
-      <p class="muted-note">Seus dados ficam só neste aparelho. Exporte de vez em quando pra não perder, e importe ao trocar de celular.</p>
-      <button class="btn" id="bk-exp" style="margin-top:14px">⬇️ Exportar backup</button>
+      <h2>Catálogo & backup</h2>
+      <div class="section-title">Catálogo</div>
+      <p class="muted-note">Pega as últimas informações publicadas (lojas, produtos e preços). Seus favoritos, anotações e listas não são alterados.</p>
+      <button class="btn" id="bk-sync" style="margin-top:10px">🔄 Sincronizar catálogo</button>
+      <div class="section-title">Backup dos seus dados</div>
+      <p class="muted-note">Backup completo deste aparelho (inclui seus favoritos, anotações e listas). Exporte de vez em quando e importe ao trocar de celular.</p>
+      <button class="btn secondary" id="bk-exp" style="margin-top:10px">⬇️ Exportar backup</button>
       <button class="btn secondary" id="bk-imp" style="margin-top:10px">⬆️ Importar backup</button>
-      <div class="section-title">Catálogos prontos</div>
-      <p class="muted-note">Adiciona perfumes já cadastrados (com foto e dados). Pode rodar mais de uma vez sem duplicar.</p>
-      <button class="btn secondary" id="bk-lattafa" style="margin-top:10px">🌹 Carregar catálogo Lattafa (143 perfumes)</button>
-      <button class="btn secondary" id="bk-alwataniah" style="margin-top:10px">🌙 Carregar catálogo Al Wataniah (43 perfumes)</button>
     `);
+    $('#bk-sync', bg).addEventListener('click', () => { syncCatalog(); closeSheet(bg); });
     $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); closeSheet(bg); });
     $('#bk-imp', bg).addEventListener('click', () => { importBackup(); closeSheet(bg); });
-    $('#bk-lattafa', bg).addEventListener('click', () => {
-      if (confirm('Adicionar 143 perfumes Lattafa ao seu catálogo?')) {
-        loadSeed('seed-lattafa.json', 'Lattafa');
-        closeSheet(bg);
-      }
-    });
-    $('#bk-alwataniah', bg).addEventListener('click', () => {
-      if (confirm('Adicionar 43 perfumes Al Wataniah ao seu catálogo?')) {
-        loadSeed('seed-alwataniah.json', 'Al Wataniah');
-        closeSheet(bg);
-      }
-    });
     return;
   }
   state.tab = tab;
