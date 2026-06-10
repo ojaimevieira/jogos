@@ -782,6 +782,11 @@ async function openListDetail(id) {
     await persist((l) => { l.items = (l.items || []).filter((x) => x.productId !== pid); });
     if (!model.length) { closeSheet(bg); openListDetail(id); }
   }));
+  bg.querySelectorAll('.li-row[data-row]').forEach((row) =>
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.li-qty, .li-del')) return;
+      openProductDetail(row.dataset.row);
+    }));
   $('#l-add', bg).addEventListener('click', () => openProductPicker(id, bg));
   $('#l-edit', bg).addEventListener('click', async () => { closeSheet(bg); openListForm(await DB.getList(id)); });
   $('#l-pdf', bg).addEventListener('click', () => exportListPDF(id));
