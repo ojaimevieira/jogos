@@ -670,7 +670,7 @@ async function renderStores() {
           <div>
             <div class="t">🏪 ${esc(s.name)}</div>
             ${s.address ? `<div class="s">${esc(s.address)}</div>` : ''}
-            <div class="s ${s.lat != null ? 'loc' : 'noloc'}">${s.lat != null ? '📍 localização marcada' : 'sem localização'}</div>
+            <div class="s ${s.lat != null ? 'loc' : 'noloc'}">${s.lat != null ? '📍 ' + s.lat.toFixed(5) + ', ' + s.lng.toFixed(5) : 'sem localização'}</div>
           </div>
           <div class="li-actions">
             ${(s.lat != null || s.address) ? `<button class="icon-btn" data-maps="${s.id}" title="Abrir no Google Maps">🧭</button>` : ''}
