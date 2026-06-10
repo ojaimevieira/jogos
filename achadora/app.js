@@ -1,6 +1,7 @@
 // Achadora — lógica da interface (vanilla JS, sem dependências)
 
 const CATEGORIES = ['Perfumes', 'Maquiagem', 'Skincare', 'Cabelo', 'Outros'];
+const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
 const CURRENCIES = [
   { code: 'BRL', label: 'R$ Real (BRL)' },
   { code: 'USD', label: '$ Dólar (USD)' },
@@ -29,6 +30,7 @@ const state = {
   search: '',
   category: 'Todos',   // chip de categoria (rápido)
   brands: [],          // marcas selecionadas no painel (vazio = todas)
+  genders: [],         // gêneros selecionados no painel (vazio = todos)
   stores: [],          // ids de loja selecionados no painel (vazio = todas)
   priceMin: null,      // preço mínimo (null = sem limite)
   priceMax: null,      // preço máximo (null = sem limite)
@@ -37,12 +39,12 @@ const state = {
 };
 
 function activeFilterCount() {
-  return state.brands.length + state.stores.length +
+  return state.brands.length + state.genders.length + state.stores.length +
     (state.priceMin != null || state.priceMax != null ? 1 : 0) +
     (state.priceSort != null ? 1 : 0);
 }
 function clearFilters() {
-  state.brands = []; state.stores = [];
+  state.brands = []; state.genders = []; state.stores = [];
   state.priceMin = null; state.priceMax = null;
   state.priceSort = null;
 }
@@ -120,6 +122,7 @@ async function renderCatalog() {
   if (onlyFav) products = products.filter((p) => p.favorite);
   if (state.category !== 'Todos') products = products.filter((p) => p.category === state.category);
   if (state.brands.length) products = products.filter((p) => state.brands.includes(p.brand || ''));
+  if (state.genders.length) products = products.filter((p) => state.genders.includes(p.gender));
   if (state.search.trim()) {
     const q = state.search.trim().toLowerCase();
     products = products.filter((p) =>
@@ -188,6 +191,7 @@ async function renderCatalog() {
     : null;
   const activeChips = [
     ...state.brands.map((b) => `<button class="achip" data-rm="brand" data-val="${esc(b)}">${esc(b)} ✕</button>`),
+    ...state.genders.map((g) => `<button class="achip" data-rm="gender" data-val="${esc(g)}">${esc(g)} ✕</button>`),
     ...state.stores.map((id) => `<button class="achip" data-rm="store" data-val="${esc(id)}">🏪 ${esc(storeName[id] || 'Loja')} ✕</button>`),
     ...(priceChipLabel ? [`<button class="achip" data-rm="price">💰 ${esc(priceChipLabel)} ✕</button>`] : []),
     ...(state.priceSort ? [`<button class="achip" data-rm="sort">${state.priceSort === 'asc' ? '↑ Menor preço' : '↓ Maior preço'} ✕</button>`] : []),
@@ -239,6 +243,7 @@ async function renderCatalog() {
       const { rm, val } = b.dataset;
       if (rm === 'all') clearFilters();
       else if (rm === 'brand') state.brands = state.brands.filter((x) => x !== val);
+      else if (rm === 'gender') state.genders = state.genders.filter((x) => x !== val);
       else if (rm === 'store') state.stores = state.stores.filter((x) => x !== val);
       else if (rm === 'price') { state.priceMin = null; state.priceMax = null; }
       else if (rm === 'sort') { state.priceSort = null; }
@@ -256,11 +261,12 @@ async function renderCatalog() {
 async function openFilterSheet() {
   const brands = await distinctBrands();
   const stores = await DB.listStores();
-  const sel = { brands: new Set(state.brands), stores: new Set(state.stores) };
+  const sel = { brands: new Set(state.brands), genders: new Set(state.genders), stores: new Set(state.stores) };
 
   const fchip = (val, label, group) =>
     `<button class="fchip ${sel[group].has(val) ? 'active' : ''}" data-group="${group}" data-val="${esc(val)}">${esc(label)}</button>`;
 
+  const genderSec = `<div class="section-title">Gênero</div><div class="fchips">${GENDERS.map((g) => fchip(g, g, 'genders')).join('')}</div>`;
   const brandSec = brands.length
     ? `<div class="section-title">Marca</div><div class="fchips">${brands.map((b) => fchip(b, b, 'brands')).join('')}</div>` : '';
   const storeSec = stores.length
@@ -280,6 +286,7 @@ async function openFilterSheet() {
 
   const bg = openSheet(`
     <h2>Filtros</h2>
+    ${genderSec}
     ${brandSec}
     ${storeSec}
     ${priceSec}
@@ -306,6 +313,7 @@ async function openFilterSheet() {
   $('#f-clear', bg).addEventListener('click', () => { clearFilters(); closeSheet(bg); render(); });
   $('#f-apply', bg).addEventListener('click', () => {
     state.brands = [...sel.brands];
+    state.genders = [...sel.genders];
     state.stores = [...sel.stores];
     const min = parseFloat($('#f-price-min', bg).value);
     const max = parseFloat($('#f-price-max', bg).value);
@@ -1044,10 +1052,11 @@ async function openStoreForm(id) {
 
 // ---------- formulário de produto ----------
 async function openProductForm(existing) {
-  const product = existing || { name: '', brand: '', category: 'Perfumes', volume: '', userNote: '', image: null };
+  const product = existing || { name: '', brand: '', category: 'Perfumes', gender: '', volume: '', userNote: '', image: null };
   const stores = await DB.listStores();
   const storeOptions = stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   const catOptions = CATEGORIES.map((c) => `<option value="${c}" ${product.category === c ? 'selected' : ''}>${c}</option>`).join('');
+  const genderOptions = GENDERS.map((g) => `<option value="${g}" ${product.gender === g ? 'selected' : ''}>${g}</option>`).join('');
 
   const bg = openSheet(`
     <h2>${existing ? 'Editar produto' : 'Novo produto'}</h2>
@@ -1064,8 +1073,14 @@ async function openProductForm(existing) {
       <label class="field"><span>Tamanho</span>
         <input class="input" id="p-volume" value="${esc(product.volume || '')}" placeholder="100 ml"></label>
     </div>
-    <label class="field"><span>Categoria</span>
-      <select class="input" id="p-cat">${catOptions}</select></label>
+    <div class="row">
+      <label class="field"><span>Categoria</span>
+        <select class="input" id="p-cat">${catOptions}</select></label>
+      <label class="field"><span>Gênero</span>
+        <select class="input" id="p-gender">
+          <option value="">— não definido —</option>${genderOptions}
+        </select></label>
+    </div>
 
     ${existing ? '' : `
     <div class="section-title">Preço (opcional)</div>
@@ -1123,6 +1138,7 @@ async function openProductForm(existing) {
       brand: $('#p-brand', bg).value.trim(),
       volume: $('#p-volume', bg).value.trim(),
       category: $('#p-cat', bg).value,
+      gender: $('#p-gender', bg).value || null,
       image: imageData,
     });
     // anotação pessoal vive separada do catálogo (não é tocada por sync)
@@ -1183,6 +1199,7 @@ async function openProductDetail(id) {
       <div class="brand">${esc(p.brand || '—')}</div>
       <div>
         <span class="tag">${esc(p.category || 'Outros')}</span>
+        ${p.gender ? `<span class="tag">${esc(p.gender)}</span>` : ''}
         ${p.volume ? `<span class="tag">${esc(p.volume)}</span>` : ''}
       </div>
       ${p.notes ? `<p class="muted-note" style="margin-top:12px">ℹ️ ${esc(p.notes)}</p>` : ''}
