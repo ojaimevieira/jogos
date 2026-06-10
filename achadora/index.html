@@ -15,12 +15,16 @@
 <body>
   <div id="app"></div>
 
+  <button class="settings-btn" id="settings-btn" aria-label="Configurações">⚙️</button>
+
   <nav class="tabbar">
     <button data-tab="catalogo" class="active"><span class="ic">🔎</span>Catálogo</button>
     <button data-tab="favoritos"><span class="ic">⭐</span>Favoritos</button>
+    <button class="scan-btn" id="scan-btn" aria-label="Escanear produto">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+    </button>
     <button data-tab="listas"><span class="ic">🧾</span>Listas</button>
     <button data-tab="lojas"><span class="ic">🏪</span>Lojas</button>
-    <button data-tab="backup"><span class="ic">💾</span>Backup</button>
   </nav>
 
   <script src="./db.js"></script>
