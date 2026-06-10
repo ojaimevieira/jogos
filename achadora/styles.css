@@ -238,6 +238,8 @@ main { padding: 8px 16px 16px; }
 }
 .sheet-bg.show { background: rgba(0,0,0,0.55); }
 .sheet-bg.closing { background: rgba(0,0,0,0); }
+/* folha que não está no topo da pilha não escurece (evita backdrops somados) */
+.sheet-bg.under.show { background: rgba(0,0,0,0); }
 .sheet {
   background: var(--surface); width: 100%;
   border-radius: 20px 20px 0 0;
@@ -261,8 +263,12 @@ main { padding: 8px 16px 16px; }
   touch-action: none;
 }
 .sheet-head:active { cursor: grabbing; }
+/* zonas laterais de largura igual: mantêm a alça centralizada haja ✕ ou ‹ Voltar */
 .sheet-head-spacer { width: 34px; }
-.sheet .grabber { width: 44px; height: 5px; background: var(--border); border-radius: 999px; }
+.sh-side { flex: 1 1 0; display: flex; align-items: center; min-width: 0; }
+.sh-left { justify-content: flex-start; }
+.sh-right { justify-content: flex-end; }
+.sheet .grabber { flex: 0 0 auto; width: 44px; height: 5px; background: var(--border); border-radius: 999px; }
 .sheet-close {
   width: 34px; height: 34px; border-radius: 50%;
   background: var(--surface-2); border: 1px solid var(--border);
@@ -271,6 +277,14 @@ main { padding: 8px 16px 16px; }
   cursor: pointer; flex-shrink: 0;
 }
 .sheet-close:active { background: var(--border); color: var(--text); }
+.sheet-back {
+  display: inline-flex; align-items: center; gap: 2px;
+  height: 34px; padding: 0 14px 0 9px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); font-size: 14px; font-weight: 600;
+  cursor: pointer; flex-shrink: 0;
+}
+.sheet-back:active { background: var(--border); }
 .sheet h2 { margin: 4px 0 16px; font-size: 19px; }
 
 label.field { display: block; margin-bottom: 14px; }

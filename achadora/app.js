@@ -376,7 +376,7 @@ async function openFilterSheet() {
       selSort = selSort === chosen ? null : chosen;
       bg.querySelectorAll('.sort-btn').forEach((x) => x.classList.toggle('active', x.dataset.sort === selSort));
     }));
-  $('#f-clear', bg).addEventListener('click', () => { clearFilters(); closeSheet(bg); render(); });
+  $('#f-clear', bg).addEventListener('click', () => { clearFilters(); popSheet(); render(); });
   $('#f-apply', bg).addEventListener('click', () => {
     state.brands = [...sel.brands];
     state.genders = [...sel.genders];
@@ -390,7 +390,7 @@ async function openFilterSheet() {
       [state.priceMin, state.priceMax] = [state.priceMax, state.priceMin];
     }
     state.priceSort = selSort;
-    closeSheet(bg);
+    popSheet();
     render();
   });
 }
@@ -698,15 +698,28 @@ async function openListForm(existing) {
     const name = $('#l-name', bg).value.trim();
     if (!name) return toast('Dê um nome pra lista');
     const saved = await DB.saveList({ ...list, name, storeId: $('#l-store', bg).value || null });
-    closeSheet(bg);
     toast('Lista salva');
-    if (existing) render(); else openListDetail(saved.id);
+    render(); // mantém a página Listas (atrás) em dia
+    if (existing) {
+      popSheet(); // volta pro detalhe da lista, que se atualiza no onResume
+    } else {
+      // troca o formulário pelo detalhe da nova lista (mesma camada)
+      replaceSheet('<div class="detail"></div>', { onResume: (b) => paintListDetail(b, saved.id) });
+      paintListDetail(currentSheet(), saved.id);
+    }
   });
 }
 
 async function openListDetail(id) {
+  const bg = openSheet('<div class="detail"></div>', { onResume: (b) => paintListDetail(b, id) });
+  await paintListDetail(bg, id);
+}
+
+// (Re)desenha o detalhe da lista dentro da folha `bg`. Usada na abertura e no
+// onResume — ao voltar de um produto ou do seletor, a lista reflete o estado novo.
+async function paintListDetail(bg, id) {
   const list = await DB.getList(id);
-  if (!list) return;
+  if (!list) { popSheet(); return; }
   const stores = await DB.listStores();
   const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const { rows } = await computeList(list);
@@ -730,7 +743,7 @@ async function openListDetail(id) {
         </div>`).join('')
     : '<p class="muted-note">Lista vazia. Toque em "Adicionar produtos".</p>';
 
-  const bg = openSheet(`
+  $('.sheet-body', bg).innerHTML = `
     <div class="detail">
       <h2>🧾 ${esc(list.name)}</h2>
       <div class="brand">${list.storeId ? '🏪 ' + esc(storeName[list.storeId] || 'Loja') : 'Sem loja definida'}</div>
@@ -743,9 +756,9 @@ async function openListDetail(id) {
       </div>
       <button class="btn danger" id="l-del" style="margin-top:10px">Excluir lista</button>
     </div>
-  `);
+  `;
 
-  // modelo mutável pra atualizar quantidades/total sem reabrir a folha
+  // modelo mutável pra atualizar quantidades/total sem repintar a folha inteira
   const model = rows;
   const updateTotal = () => {
     const totals = {};
@@ -781,24 +794,24 @@ async function openListDetail(id) {
     if (rowEl) rowEl.remove();
     updateTotal();
     await persist((l) => { l.items = (l.items || []).filter((x) => x.productId !== pid); });
-    if (!model.length) { closeSheet(bg); openListDetail(id); }
+    if (!model.length) paintListDetail(bg, id); // repinta no estado "lista vazia"
   }));
   bg.querySelectorAll('.li-row[data-row]').forEach((row) =>
     row.addEventListener('click', () => openProductDetail(row.dataset.row)));
-  $('#l-add', bg).addEventListener('click', () => openProductPicker(id, bg));
-  $('#l-edit', bg).addEventListener('click', async () => { closeSheet(bg); openListForm(await DB.getList(id)); });
+  $('#l-add', bg).addEventListener('click', () => openProductPicker(id));
+  $('#l-edit', bg).addEventListener('click', async () => openListForm(await DB.getList(id)));
   $('#l-pdf', bg).addEventListener('click', () => exportListPDF(id));
   $('#l-del', bg).addEventListener('click', async () => {
     if (!confirm('Excluir esta lista?')) return;
     await DB.deleteList(id);
-    closeSheet(bg);
+    popSheet();
     toast('Lista excluída');
     render();
   });
 }
 
 // Seletor de produtos pra adicionar numa lista (toca pra incluir/remover)
-async function openProductPicker(listId, parentBg) {
+async function openProductPicker(listId) {
   const list = await DB.getList(listId);
   const inList = new Set((list.items || []).map((x) => x.productId));
   const products = await DB.listProducts();
@@ -834,7 +847,8 @@ async function openProductPicker(listId, parentBg) {
       }));
   };
   $('#pick-search', bg).addEventListener('input', (e) => { q = e.target.value; renderPick(); });
-  $('#pick-done', bg).addEventListener('click', () => { closeSheet(bg); closeSheet(parentBg); openListDetail(listId); });
+  // Concluir volta pro detalhe da lista (embaixo na pilha), que se atualiza no onResume
+  $('#pick-done', bg).addEventListener('click', () => popSheet());
   renderPick();
 }
 
@@ -853,7 +867,7 @@ async function openAddToList(productId) {
     l.items = l.items || [];
     if (l.items.some((x) => x.productId === productId)) toast('Já está nessa lista');
     else { l.items.push({ productId, qty: 1 }); await DB.saveList(l); toast('Adicionado à lista ✨'); }
-    closeSheet(bg);
+    popSheet();
     render(); // atualiza o selo 🧾 na miniatura
   }));
   $('#atl-new', bg).addEventListener('click', async () => {
@@ -862,7 +876,7 @@ async function openAddToList(productId) {
       await DB.saveList({ name: name.trim(), storeId: null, items: [{ productId, qty: 1 }] });
       toast('Lista criada com o produto ✨');
     }
-    closeSheet(bg);
+    popSheet();
     render();
   });
 }
@@ -935,51 +949,104 @@ async function exportListPDF(id) {
   else iframe.onload = () => setTimeout(fire, 120);
 }
 
-// ---------- folha inferior genérica ----------
-function openSheet(html) {
+// ---------- pilha de folhas (navegação em camadas) ----------
+// As folhas (bottom sheets) formam uma PILHA. Cada folha empilha uma entrada no
+// histórico, então o Voltar do navegador/Android fecha sempre a folha do topo
+// (e não sai do app). A folha do topo mostra ✕ (sair) quando é a única, ou
+// ‹ Voltar quando há uma folha-pai. Só o topo escurece o fundo — as de baixo
+// ficam transparentes pra opacidade não se somar. TODO fechamento passa por
+// `popSheet` → histórico → `_removeTopSheet`, mantendo DOM e histórico em sync.
+const sheetStack = [];
+function currentSheet() { return sheetStack[sheetStack.length - 1] || null; }
+
+function sheetHeadHtml(nested) {
+  const back = nested ? '<button class="sheet-back" aria-label="Voltar">‹ Voltar</button>' : '';
+  const close = nested ? '' : '<button class="sheet-close" aria-label="Fechar">✕</button>';
+  return `<div class="sheet-head">
+      <div class="sh-side sh-left">${back}</div>
+      <div class="grabber"></div>
+      <div class="sh-side sh-right">${close}</div>
+    </div>`;
+}
+
+// Abre uma folha nova no topo da pilha. `opts.onResume(bg)` roda quando esta
+// folha volta a ser o topo (uma folha-filha foi fechada) — use pra atualizar
+// o conteúdo sem reabrir.
+function openSheet(html, opts = {}) {
   const bg = document.createElement('div');
   bg.className = 'sheet-bg';
-  bg.innerHTML = `
-    <div class="sheet">
-      <div class="sheet-head">
-        <div class="sheet-head-spacer"></div>
-        <div class="grabber"></div>
-        <button class="sheet-close" aria-label="Fechar">✕</button>
-      </div>
-      <div class="sheet-body">${html}</div>
-    </div>`;
+  bg.innerHTML = `<div class="sheet">${sheetHeadHtml(sheetStack.length > 0)}<div class="sheet-body">${html}</div></div>`;
   const sheet = $('.sheet', bg);
 
-  // fecha tocando no fundo escuro
-  bg.addEventListener('click', (e) => { if (e.target === bg) closeSheet(bg); });
-  // fecha no botão ✕
-  $('.sheet-close', bg).addEventListener('click', () => closeSheet(bg));
-  // fecha no Esc (desktop)
-  const onKey = (e) => { if (e.key === 'Escape') closeSheet(bg); };
+  // a folha que estava no topo deixa de escurecer (evita backdrops somados)
+  const below = currentSheet();
+  if (below) below.classList.add('under');
+
+  bg._opts = opts;
+  sheetStack.push(bg);
+  history.pushState({ sheetDepth: sheetStack.length }, '');
+
+  // todos os gestos de fechar voltam um nível pelo histórico
+  bg.addEventListener('click', (e) => { if (e.target === bg) popSheet(); });
+  const closeBtn = $('.sheet-close', bg);
+  if (closeBtn) closeBtn.addEventListener('click', () => popSheet());
+  const backBtn = $('.sheet-back', bg);
+  if (backBtn) backBtn.addEventListener('click', () => popSheet());
+  const onKey = (e) => { if (e.key === 'Escape' && currentSheet() === bg) popSheet(); };
   document.addEventListener('keydown', onKey);
   bg._onKey = onKey;
 
-  // arrastar pra baixo pra fechar (a partir da alça/cabeçalho)
   enableDragToClose(bg, sheet);
 
-  // animação de entrada
-  requestAnimationFrame(() => bg.classList.add('show'));
   document.body.appendChild(bg);
-  // segunda chamada de rAF garante a transição mesmo recém-anexado
+  requestAnimationFrame(() => bg.classList.add('show'));
   requestAnimationFrame(() => bg.classList.add('show'));
   return bg;
 }
 
-function closeSheet(bg) {
-  if (!bg || bg._closing) return;
-  bg._closing = true;
+// Troca o conteúdo da folha do topo SEM empilhar (mesma entrada de histórico).
+// Útil pra "formulário → tela de detalhe" sem virar mais uma camada.
+function replaceSheet(html, opts = {}) {
+  const bg = currentSheet();
+  if (!bg) return openSheet(html, opts);
+  bg._opts = opts;
+  $('.sheet-body', bg).innerHTML = html;
+  const sheet = $('.sheet', bg);
+  if (sheet) sheet.scrollTop = 0;
+  return bg;
+}
+
+// Fecha a folha do topo. Só dispara o histórico; quem remove o DOM é o popstate.
+// O flag `_closing` evita que um duplo-toque dispare dois history.back e pule
+// dois níveis de uma vez.
+function popSheet() {
+  const top = currentSheet();
+  if (!top || top._closing) return;
+  top._closing = true;
+  history.back();
+}
+
+// Remoção real da folha do topo — chamado exclusivamente pelo popstate.
+function _removeTopSheet() {
+  const bg = sheetStack.pop();
+  if (!bg) return;
   if (bg._onKey) document.removeEventListener('keydown', bg._onKey);
   bg.classList.remove('show');
   bg.classList.add('closing');
   const done = () => bg.remove();
   bg.addEventListener('transitionend', done, { once: true });
   setTimeout(done, 320); // fallback se a transição não disparar
+  // a nova folha do topo volta a escurecer e é "retomada" (atualiza o conteúdo)
+  const top = currentSheet();
+  if (top) {
+    top.classList.remove('under');
+    if (top._opts && typeof top._opts.onResume === 'function') top._opts.onResume(top);
+  }
 }
+
+window.addEventListener('popstate', () => {
+  if (sheetStack.length) _removeTopSheet();
+});
 
 // Permite arrastar a folha pra baixo (alça/cabeçalho) e soltar pra fechar
 function enableDragToClose(bg, sheet) {
@@ -1004,7 +1071,8 @@ function enableDragToClose(bg, sheet) {
     dragging = false;
     sheet.style.transition = '';
     if (dy > 110) {
-      closeSheet(bg);
+      sheet.style.transform = 'translateY(100%)'; // continua deslizando pra baixo
+      popSheet();
     } else {
       sheet.style.transform = '';
     }
@@ -1107,13 +1175,13 @@ async function openStoreForm(id) {
       lat: picked ? picked.lat : null,
       lng: picked ? picked.lng : null,
     });
-    closeSheet(bg);
+    popSheet();
     toast('Loja salva');
     render();
   });
   if (id) $('#st-del', bg).addEventListener('click', async () => {
     await DB.deleteStore(id);
-    closeSheet(bg);
+    popSheet();
     toast('Loja excluída');
     render();
   });
@@ -1221,7 +1289,7 @@ async function openProductForm(existing) {
         await DB.savePrice({ productId: saved.id, storeId: storeId || null, value: priceVal, currency, date: Date.now() });
       }
     }
-    closeSheet(bg);
+    popSheet(); // volta pro detalhe (se veio de Editar) ou pra página, que se atualizam
     toast('Produto salvo ✨');
     render();
   });
@@ -1235,8 +1303,15 @@ function parsePrice(str) {
 
 // ---------- detalhe do produto + tabela de preços ----------
 async function openProductDetail(id) {
+  const bg = openSheet('<div class="detail"></div>', { onResume: (b) => paintProductDetail(b, id) });
+  await paintProductDetail(bg, id);
+}
+
+// (Re)desenha o detalhe do produto dentro da folha `bg`. Usada na abertura e no
+// onResume — voltar do formulário/preço reflete favoritos, edições e preços novos.
+async function paintProductDetail(bg, id) {
   const p = await DB.getProduct(id);
-  if (!p) return;
+  if (!p) { popSheet(); return; }
   const summary = await priceSummary(id);
   const stores = await DB.listStores();
   const storeMap = Object.fromEntries(stores.map((s) => [s.id, s.name]));
@@ -1261,7 +1336,7 @@ async function openProductDetail(id) {
     ? `<img class="detail-hero" src="${p.image}" alt="">`
     : `<div class="detail-hero placeholder">🧴</div>`;
 
-  const bg = openSheet(`
+  $('.sheet-body', bg).innerHTML = `
     <div class="detail">
       ${hero}
       <h2>${esc(p.name)} ${p.favorite ? '❤️' : ''}</h2>
@@ -1285,28 +1360,27 @@ async function openProductDetail(id) {
       </div>
       <button class="btn danger" id="del-btn" style="margin-top:10px">Excluir produto</button>
     </div>
-  `);
+  `;
 
-  $('#fav-btn', bg).addEventListener('click', async () => { await toggleFav(id); closeSheet(bg); openProductDetail(id); });
-  $('#edit-btn', bg).addEventListener('click', async () => { closeSheet(bg); openProductForm(await DB.getProduct(id)); });
+  $('#fav-btn', bg).addEventListener('click', async () => { await toggleFav(id); paintProductDetail(bg, id); });
+  $('#edit-btn', bg).addEventListener('click', async () => openProductForm(await DB.getProduct(id)));
   $('#del-btn', bg).addEventListener('click', async () => {
     if (!confirm('Excluir este produto e seus preços?')) return;
     await DB.deleteProduct(id);
-    closeSheet(bg);
+    popSheet();
     toast('Produto excluído');
     render();
   });
-  $('#add-price', bg).addEventListener('click', () => openPriceForm(id, bg));
+  $('#add-price', bg).addEventListener('click', () => openPriceForm(id));
   $('#addlist-btn', bg).addEventListener('click', () => openAddToList(id));
   bg.querySelectorAll('[data-delprice]').forEach((b) =>
     b.addEventListener('click', async () => {
       await DB.deletePrice(b.dataset.delprice);
-      closeSheet(bg);
-      openProductDetail(id);
+      paintProductDetail(bg, id); // repinta a tabela de preços no lugar
     }));
 }
 
-async function openPriceForm(productId, parentBg) {
+async function openPriceForm(productId) {
   const stores = await DB.listStores();
   const storeOptions = stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   const bg = openSheet(`
@@ -1343,10 +1417,8 @@ async function openPriceForm(productId, parentBg) {
     if (value == null) return toast('Informe um preço válido');
     const currency = $('#pf-currency', bg).value || 'BRL';
     await DB.savePrice({ productId, storeId: sel.value || null, value, currency, date: Date.now() });
-    closeSheet(bg);
-    closeSheet(parentBg);
+    popSheet(); // volta pro detalhe do produto, que repinta a tabela no onResume
     toast('Preço adicionado');
-    openProductDetail(productId);
   });
 }
 
@@ -1458,9 +1530,9 @@ function setTab(tab) {
       <button class="btn secondary" id="bk-exp" style="margin-top:10px">⬇️ Exportar backup</button>
       <button class="btn secondary" id="bk-imp" style="margin-top:10px">⬆️ Importar backup</button>
     `);
-    $('#bk-sync', bg).addEventListener('click', () => { syncCatalog(); closeSheet(bg); });
-    $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); closeSheet(bg); });
-    $('#bk-imp', bg).addEventListener('click', () => { importBackup(); closeSheet(bg); });
+    $('#bk-sync', bg).addEventListener('click', () => { syncCatalog(); popSheet(); });
+    $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); popSheet(); });
+    $('#bk-imp', bg).addEventListener('click', () => { importBackup(); popSheet(); });
     return;
   }
   state.tab = tab;
