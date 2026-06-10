@@ -1075,6 +1075,65 @@ async function openBrandPicker(currentId, onPick) {
   renderList();
 }
 
+// Seletor de categoria — mesma UX do seletor de marca, mas opera em strings simples.
+function openCategoryPicker(currentCat, catList, onPick) {
+  let q = '';
+  const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/\s+/g, ' ').trim();
+
+  const bg = openSheet(`
+    <h2>Categoria</h2>
+    <div class="search" style="margin:0 0 10px">
+      <input id="cat-search" placeholder="🔍 Buscar ou criar categoria" autocomplete="off">
+    </div>
+    <div class="pick-list" id="cat-pick"></div>
+  `);
+
+  const choose = (cat) => { onPick(cat); popLayer(); };
+
+  const renderList = () => {
+    const ql = norm(q);
+    const filtered = ql ? catList.filter((c) => norm(c).includes(ql)) : catList;
+    const hasExact = !!ql && catList.some((c) => norm(c) === ql);
+    const host = $('#cat-pick', bg);
+
+    const clearRow = currentCat
+      ? `<div class="pick-row" data-clear="1">
+           <div class="li-info"><div class="li-name muted">✕ Sem categoria</div></div></div>` : '';
+    const createRow = (q.trim() && !hasExact)
+      ? `<div class="pick-row create" data-create="1">
+           <div class="li-info"><div class="li-name">+ Criar categoria "${esc(q.trim())}"</div></div>
+           <div class="pick-check">+</div></div>` : '';
+    const rows = filtered.map((c) => `
+      <div class="pick-row ${c === currentCat ? 'on' : ''}" data-cat="${esc(c)}">
+        <div class="li-info"><div class="li-name">${esc(c)}</div></div>
+        <div class="pick-check">${c === currentCat ? '✓' : ''}</div>
+      </div>`).join('');
+
+    host.innerHTML = clearRow + createRow + rows
+      || '<p class="muted-note">Nenhuma categoria ainda. Digite acima para criar.</p>';
+
+    const createEl = $('[data-create]', host);
+    if (createEl) createEl.addEventListener('click', () => choose(q.trim()));
+    const clearEl = $('[data-clear]', host);
+    if (clearEl) clearEl.addEventListener('click', () => choose(''));
+    host.querySelectorAll('[data-cat]').forEach((row) =>
+      row.addEventListener('click', () => choose(row.dataset.cat)));
+  };
+
+  const input = $('#cat-search', bg);
+  input.addEventListener('input', (e) => { q = e.target.value; renderList(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const norm2 = norm(q);
+    if (!q.trim() || catList.some((c) => norm(c) === norm2)) return;
+    const cr = $('[data-create]', bg);
+    if (cr) cr.click();
+  });
+  renderList();
+}
+
 // Adicionar um produto a uma lista (a partir do detalhe do produto)
 async function openAddToList(productId) {
   const lists = await DB.listLists();
@@ -1483,17 +1542,17 @@ async function openStoreForm(id) {
 
 // ---------- formulário de produto ----------
 async function openProductForm(existing) {
-  const product = existing || { name: '', brand: '', category: 'Perfumes', gender: '', volume: '', userNote: '', image: null };
+  const product = existing || { name: '', brand: '', category: '', gender: '', volume: '', userNote: '', image: null };
   const stores = await DB.listStores();
   const brandList = await DB.listBrands(); // entidade-fonte (store `brands`) p/ casar a marca da IA
   const storeOptions = stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   // marca escolhida: id da entidade + nome pra exibir. Nome sem id = pendente (vira marca no save).
   let selectedBrandId = product.brandId || null;
   let selectedBrandName = product.brand || '';
-  // categoria é campo livre: sugere as já usadas (datalist), mas aceita digitar uma nova.
+  // categoria usa o mesmo padrão do seletor de marca: sheet com busca + criar.
   const allProducts = await DB.listProducts();
   const catList = categoriesFrom(allProducts);
-  const catDatalist = catList.map((c) => `<option value="${esc(c)}"></option>`).join('');
+  let selectedCat = product.category || '';
   const genderOptions = GENDERS.map((g) => `<option value="${g}" ${product.gender === g ? 'selected' : ''}>${g}</option>`).join('');
 
   const bg = openSheet(`
@@ -1528,9 +1587,11 @@ async function openProductForm(existing) {
         <input class="input" id="p-volume" value="${esc(product.volume || '')}" placeholder="100 ml"></label>
     </div>
     <div class="row">
-      <label class="field"><span>Categoria</span>
-        <input class="input" id="p-cat" list="p-cat-list" value="${esc(product.category || '')}" placeholder="Ex.: Perfumes, Celular">
-        <datalist id="p-cat-list">${catDatalist}</datalist></label>
+      <div class="field"><span>Categoria</span>
+        <div class="input select-like" id="p-cat" role="button" tabindex="0">
+          <span id="p-cat-label" class="${selectedCat ? '' : 'ph'}">${selectedCat ? esc(selectedCat) : 'Selecionar categoria'}</span>
+          <span class="chev">▾</span>
+        </div></div>
       <label class="field"><span>Gênero</span>
         <select class="input" id="p-gender">
           <option value="">— não definido —</option>${genderOptions}
@@ -1603,7 +1664,7 @@ async function openProductForm(existing) {
       };
       let n = 0;
       if (fillIfEmpty('#p-name', info.name)) n++;
-      if (fillIfEmpty('#p-cat', info.category)) n++;
+      if (info.category && !selectedCat) { selectedCat = info.category; updateCatField(); n++; }
       // marca: só preenche se ainda não houver escolha. Casa com a entidade
       // existente (id determinístico) ou deixa o nome pendente p/ criar no save.
       if (info.brand && !selectedBrandId && !selectedBrandName) {
@@ -1656,6 +1717,22 @@ async function openProductForm(existing) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBrand(); }
   });
 
+  // categoria: mesmo padrão do seletor de marca
+  const catFieldLabel = $('#p-cat-label', bg);
+  function updateCatField() {
+    catFieldLabel.textContent = selectedCat || 'Selecionar categoria';
+    catFieldLabel.classList.toggle('ph', !selectedCat);
+  }
+  const openCat = () => openCategoryPicker(selectedCat, catList, (cat) => {
+    selectedCat = cat;
+    updateCatField();
+  });
+  const catField = $('#p-cat', bg);
+  catField.addEventListener('click', openCat);
+  catField.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCat(); }
+  });
+
   // loja nova inline
   const storeSel = $('#p-store', bg);
   if (storeSel) storeSel.addEventListener('change', async () => {
@@ -1682,7 +1759,7 @@ async function openProductForm(existing) {
       name,
       brandId,
       volume: $('#p-volume', bg).value.trim(),
-      category: $('#p-cat', bg).value.trim() || 'Outros',
+      category: selectedCat || 'Outros',
       gender: $('#p-gender', bg).value || null,
       image: imageData,
     });
