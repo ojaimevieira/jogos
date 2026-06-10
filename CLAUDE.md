@@ -15,8 +15,12 @@ catálogo da Achadora** quando o dono manda uma foto/produto. Siga este fluxo.
 O catálogo é publicado junto do app e versionado. Três tipos de registro, todos com
 `source: 'catalog'` (o app marca isso no sync; não precisa pôr nos arquivos):
 
-- **Produto** — `{ id, name, brand, category, volume, notes, image, createdAt, updatedAt }`
+- **Produto** — `{ id, name, brandId, category, volume, notes, image, createdAt, updatedAt }`
   - `image` é um data-URL **base64 JPEG** (`data:image/jpeg;base64,...`). É o padrão visual.
+  - `brandId` referencia uma **Marca** (não guarda o nome). O app resolve o nome na leitura.
+- **Marca** — `{ id, name }` (entidade própria, como a loja). `id` determinístico derivado do
+  nome: `brand-<slug>` (ex.: `brand-lattafa`, `brand-al-wataniah`). Mesmo nome → mesmo id em
+  qualquer aparelho/seed, então nunca duplica.
 - **Loja** — `{ id, name, address, lat, lng }` (lat/lng podem faltar; o app geocodifica).
 - **Preço** — `{ id, productId, storeId, value, currency, date, createdAt }` (`currency` = `USD`).
 
@@ -26,10 +30,12 @@ O catálogo é publicado junto do app e versionado. Três tipos de registro, tod
 |---|---|
 | `achadora/catalog.json` | Manifesto: `version` + lista de `sources` (arquivos de produtos). |
 | `achadora/seed-lojas.json` | As lojas (`stores`). |
-| `achadora/seed-lattafa.json` | Produtos + preços da marca Lattafa. |
-| `achadora/seed-alwataniah.json` | Produtos + preços da marca Al Wataniah. |
+| `achadora/seed-lattafa.json` | `brands` + produtos + preços da marca Lattafa. |
+| `achadora/seed-alwataniah.json` | `brands` + produtos + preços da marca Al Wataniah. |
 
-Uma marca nova = um novo `seed-<marca>.json` (mesmo formato) listado em `catalog.json`.
+Cada seed de marca declara a própria marca num array `brands: [{ id, name }]`, e os produtos
+referenciam pelo `brandId`. Uma marca nova = um novo `seed-<marca>.json` (mesmo formato:
+`brands` + `products` + `prices`) listado em `catalog.json`.
 
 ### ⚠️ O que dispara o sync no app
 
@@ -41,8 +47,10 @@ O app (`achadora/app.js`, `syncCatalog`) **só** sincroniza quando
 ## Fluxo: adicionar/atualizar um produto
 
 1. **Identifique a marca** → escolha o `seed-<marca>.json` (ou crie um novo e registre em
-   `catalog.json` → `sources`).
-2. **Produto**: adicione o objeto em `products`. `id` único e estável (padrão `<marca>-NNN`).
+   `catalog.json` → `sources`). Garanta que a marca esteja no array `brands` do seed
+   (`id` = `brand-<slug>`); o produto referencia esse `id` via `brandId`.
+2. **Produto**: adicione o objeto em `products` com `brandId` (não ponha `brand` por extenso).
+   `id` único e estável (padrão `<marca>-NNN`).
    - **Foto**: o padrão é base64 JPEG embutido em `image`. Prefira a foto que o dono
      mandar. Reduza/comprima para JPEG antes de embutir (manter os arquivos leves).
 3. **Loja**: o dono diz a loja.

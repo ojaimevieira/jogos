@@ -63,17 +63,11 @@ async function distinctBrands() {
     .sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
-// Normaliza pra comparar marcas: sem acento, sem caixa, espaços colapsados.
+// Normaliza pra comparar nomes de marca (sem acento/caixa). A unificação de
+// verdade é feita no banco por id determinístico (DB.resolveBrand); aqui só
+// usamos pra exibir a grafia canônica já existente enquanto o form está aberto.
 const normBrand = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toLowerCase().replace(/\s+/g, ' ').trim();
-
-// Se a marca digitada já existe (ignorando caixa/acento/espaço), devolve a
-// grafia CANÔNICA que já está no catálogo — evita "Lattafa"/"lattafa" duplicados.
-function canonicalBrand(input, known) {
-  const t = normBrand(input);
-  if (!t) return '';
-  return known.find((b) => normBrand(b) === t) || input.trim();
-}
 
 const app = document.getElementById('app');
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1517,8 +1511,9 @@ async function openProductForm(existing) {
       };
       let n = 0;
       if (fillIfEmpty('#p-name', info.name)) n++;
-      // marca: se já existe no catálogo, usa a grafia canônica (evita duplicata)
-      if (fillIfEmpty('#p-brand', canonicalBrand(info.brand, brands))) n++;
+      // marca: mostra a grafia já existente se houver (a unificação real é no save)
+      const brandMatch = brands.find((b) => normBrand(b) === normBrand(info.brand));
+      if (fillIfEmpty('#p-brand', brandMatch || info.brand)) n++;
       if (fillIfEmpty('#p-volume', info.volume)) n++;
       if (fillIfEmpty('#p-price', info.price)) n++; // campos de preço só existem no cadastro novo
       const gsel = $('#p-gender', bg);
@@ -1564,10 +1559,12 @@ async function openProductForm(existing) {
   $('#p-save', bg).addEventListener('click', async () => {
     const name = $('#p-name', bg).value.trim();
     if (!name) return toast('O nome é obrigatório');
+    // marca vira entidade: encontra a existente (por id determinístico) ou cria
+    const brandId = await DB.resolveBrand($('#p-brand', bg).value);
     const saved = await DB.saveProduct({
       ...product,
       name,
-      brand: canonicalBrand($('#p-brand', bg).value, brands),
+      brandId,
       volume: $('#p-volume', bg).value.trim(),
       category: $('#p-cat', bg).value,
       gender: $('#p-gender', bg).value || null,
@@ -1783,12 +1780,13 @@ async function syncCatalog() {
     }
 
     // baixa todos os arquivos do manifesto e junta tudo numa união só
-    const union = { products: [], stores: [], prices: [] };
+    const union = { products: [], brands: [], stores: [], prices: [] };
     for (const src of manifest.sources || []) {
       const r = await fetch(src.file + '?t=' + Date.now(), { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status + ' em ' + src.file);
       const data = await r.json();
       union.products.push(...(data.products || []));
+      union.brands.push(...(data.brands || []));
       union.stores.push(...(data.stores || []));
       union.prices.push(...(data.prices || []));
     }
