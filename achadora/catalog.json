@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 6,
+  "version": 7,
   "updatedAt": "2026-06-10",
   "note": "Catálogo canônico da Achadora. Para publicar uma atualização: edite/adicione os arquivos em 'sources', incremente 'version' e dê push. O app sincroniza quando 'version' for maior que a já baixada.",
   "sources": [
