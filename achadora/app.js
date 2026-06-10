@@ -111,7 +111,7 @@ function compressImage(file, maxSize = 900, quality = 0.72) {
 // por aqui, então a chave não precisa de backend pra ficar protegida. Se um dia
 // outras pessoas cadastrarem, troca-se só a URL por um proxy (Cloudflare Worker).
 const AI_KEY_STORAGE = 'achadora.geminiKey';
-const AI_MODEL = 'gemini-2.0-flash'; // tem visão + saída JSON, generoso no free tier
+const AI_MODEL = 'gemini-flash-latest'; // alias que aponta sempre pro flash atual (não quebra quando aposentam uma versão)
 
 const getAiKey = () => (localStorage.getItem(AI_KEY_STORAGE) || '').trim();
 function setAiKey(k) {
@@ -205,15 +205,19 @@ async function analyzeProductImage(file) {
     throw new Error(detail ? `IA ${res.status}: ${detail}` : 'falha-' + res.status);
   }
   const json = await res.json();
-  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+  // pega a primeira parte que tenha texto (o modelo pode emitir "thought" antes)
+  const parts = json?.candidates?.[0]?.content?.parts || [];
+  const text = parts.map((p) => p.text).find(Boolean);
   if (!text) throw new Error('sem-resposta');
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error('resposta-invalida'); }
+  // casa o gênero sem depender da capitalização ("masculino" → "Masculino")
+  const g = (parsed.gender || '').trim().toLowerCase();
   return {
     name: (parsed.name || '').trim(),
     brand: (parsed.brand || '').trim(),
     volume: (parsed.volume || '').trim(),
-    gender: GENDERS.includes(parsed.gender) ? parsed.gender : '',
+    gender: GENDERS.find((x) => x.toLowerCase() === g) || '',
   };
 }
 
