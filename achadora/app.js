@@ -404,7 +404,6 @@ async function renderCatalog() {
     ${onlyFav || allCategories.length <= 1 ? '' : `<div class="chips">${catChips}</div>`}
     ${count ? `<div class="active-filters">${activeChips}<button class="achip clear" data-rm="all">Limpar</button></div>` : ''}
     <main>${body}</main>
-    <button class="fab" id="fab" aria-label="Adicionar produto">+</button>
   `;
 
   $('#search').addEventListener('input', (e) => {
@@ -413,7 +412,6 @@ async function renderCatalog() {
     debouncedRerenderList();
   });
   $('#filter-btn').addEventListener('click', () => openFilterSheet());
-  $('#fab').addEventListener('click', () => openProductForm());
   app.querySelectorAll('.chip').forEach((c) =>
     c.addEventListener('click', () => { state.category = c.dataset.cat; render(); }));
   app.querySelectorAll('.active-filters .achip').forEach((b) =>
@@ -1355,6 +1353,21 @@ function _removeTopLayer() {
     top.classList.remove('under');
     if (top._opts && typeof top._opts.onResume === 'function') top._opts.onResume(top);
   }
+  // Transição "fecha esta camada → abre a próxima" (ex.: scanner → detalhe/cadastro).
+  // Roda DEPOIS do popstate ter assentado o histórico, então a camada de destino
+  // pode empilhar com history.pushState sem corromper a profundidade da pilha.
+  if (el._onRemove) { const fn = el._onRemove; el._onRemove = null; fn(); }
+}
+
+// Fecha a camada do topo e, quando ela sair de vez, executa `action` (que pode
+// abrir novas camadas). Evita o gambito frágil de popLayer() + abrir em seguida,
+// que dispararia history.back e history.pushState no mesmo tique.
+function popThen(action) {
+  const top = topLayer();
+  if (!top) { action(); return; }
+  const prev = top._onRemove;
+  top._onRemove = () => { if (prev) prev(); action(); };
+  popLayer();
 }
 
 window.addEventListener('popstate', () => {
@@ -1541,14 +1554,27 @@ async function openStoreForm(id) {
 }
 
 // ---------- formulário de produto ----------
-async function openProductForm(existing) {
-  const product = existing || { name: '', brand: '', category: '', gender: '', volume: '', userNote: '', image: null };
+// `draft` (opcional, só p/ cadastro NOVO) traz campos já lidos pela IA no scanner
+// + a foto comprimida, pra abrir o form preenchido. O usuário revisa e salva.
+async function openProductForm(existing, draft = null) {
+  const product = existing || {
+    name: draft?.name || '', brand: '', category: draft?.category || '',
+    gender: draft?.gender || '', volume: draft?.volume || '',
+    userNote: '', image: draft?.image || null,
+  };
   const stores = await DB.listStores();
   const brandList = await DB.listBrands(); // entidade-fonte (store `brands`) p/ casar a marca da IA
   const storeOptions = stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   // marca escolhida: id da entidade + nome pra exibir. Nome sem id = pendente (vira marca no save).
   let selectedBrandId = product.brandId || null;
   let selectedBrandName = product.brand || '';
+  // marca vinda do scan: casa com a entidade existente (id determinístico) ou
+  // deixa o nome pendente pra virar marca nova no save.
+  if (!existing && draft && draft.brand) {
+    const match = brandList.find((b) => normBrand(b.name) === normBrand(draft.brand));
+    selectedBrandId = match ? match.id : null;
+    selectedBrandName = match ? match.name : draft.brand.trim();
+  }
   // categoria usa o mesmo padrão do seletor de marca: sheet com busca + criar.
   const allProducts = await DB.listProducts();
   const catList = categoriesFrom(allProducts);
@@ -1623,6 +1649,12 @@ async function openProductForm(existing) {
   let imageData = product.image || null;
   let currentFile = null;
   const aiBtn = $('#ai-fill', bg);
+
+  // preço/moeda lidos pela IA no scanner (esses campos só existem no cadastro novo)
+  if (!existing && draft) {
+    if (draft.price) { const pe = $('#p-price', bg); if (pe) pe.value = draft.price; }
+    if (draft.currency) { const ce = $('#p-currency', bg); if (ce) ce.value = draft.currency; }
+  }
 
   function bindPhotoOpts() {
     const optFile = $('#photo-opt-file', bg);
@@ -1787,8 +1819,11 @@ function parsePrice(str) {
 }
 
 // ---------- detalhe do produto + tabela de preços ----------
-async function openProductDetail(id) {
+async function openProductDetail(id, opts = {}) {
   pushPage((el) => paintProductDetail(el, id), { onResume: (el) => paintProductDetail(el, id) });
+  // vindo do scanner com produto já existente: abre o form de preço por cima,
+  // pronto pra registrar o preço novo (o detalhe se atualiza ao fechar).
+  if (opts.addPrice) openPriceForm(id);
 }
 
 // (Re)desenha a página de detalhe do produto dentro de `bg`. Usada na abertura e
@@ -1909,6 +1944,191 @@ async function openPriceForm(productId) {
   });
 }
 
+// ---------- scanner (câmera ao vivo + leitura por IA) ----------
+// Fluxo: abre a câmera com moldura → captura (ou galeria) → lê a etiqueta pela IA
+// → produto já existe: abre o detalhe dele com o form de preço pronto; senão abre
+// o cadastro já preenchido. Sem chave de IA (ou leitura falha), vai direto ao
+// cadastro com a foto anexada. É o reaproveitamento do que já existe, automatizado.
+let _scanStream = null;
+function stopScanStream() {
+  if (_scanStream) {
+    _scanStream.getTracks().forEach((t) => t.stop());
+    _scanStream = null;
+  }
+}
+
+function openScanner() {
+  const layer = pushPage((el) => buildScanner(el), { title: '' });
+  layer.classList.add('scanner-layer');
+  // desliga a câmera em qualquer modo de fechar (botão, swipe, Voltar do Android)
+  layer._onRemove = stopScanStream;
+}
+
+function buildScanner(layer) {
+  $('.page-body', layer).innerHTML = `
+    <div class="scan-view" id="scan-view">
+      <video id="scan-video" playsinline autoplay muted></video>
+      <div class="scan-frame"><span></span><span></span><span></span><span></span></div>
+      <div class="scan-hint">Enquadre a etiqueta do produto</div>
+    </div>
+    <div class="scan-controls">
+      <button class="scan-side" id="scan-gallery" aria-label="Escolher da galeria">🖼️</button>
+      <button class="scan-shutter" id="scan-shutter" aria-label="Tirar foto"></button>
+      <button class="scan-side" id="scan-manual" aria-label="Cadastrar sem foto">✏️</button>
+    </div>
+    <input type="file" id="scan-file" accept="image/*" hidden>
+  `;
+
+  const video = $('#scan-video', layer);
+  const shutter = $('#scan-shutter', layer);
+  const fileInput = $('#scan-file', layer);
+
+  // liga a câmera traseira; falhou (permissão negada / sem câmera) → galeria + manual
+  (async () => {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('no-cam');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } }, audio: false,
+      });
+      if (layer._closing) { stream.getTracks().forEach((t) => t.stop()); return; }
+      _scanStream = stream;
+      video.srcObject = stream;
+      await video.play().catch(() => {});
+    } catch (e) {
+      showScanFallback(layer);
+    }
+  })();
+
+  shutter.addEventListener('click', async () => {
+    if (!_scanStream) return;
+    shutter.disabled = true;
+    const blob = await captureFrame(video);
+    if (blob) processScan(layer, blob);
+    else shutter.disabled = false;
+  });
+  $('#scan-gallery', layer).addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) processScan(layer, file);
+  });
+  $('#scan-manual', layer).addEventListener('click', () => popThen(() => openProductForm()));
+}
+
+// câmera indisponível: troca a vista pela orientação de galeria/manual e some o disparo
+function showScanFallback(layer) {
+  stopScanStream();
+  const view = $('#scan-view', layer);
+  if (view) view.innerHTML = `
+    <div class="scan-fallback">
+      <div class="big">📷</div>
+      <div>Não consegui abrir a câmera.<br>Use a galeria 🖼️ ou cadastre sem foto ✏️.</div>
+    </div>`;
+  const shutter = $('#scan-shutter', layer);
+  if (shutter) shutter.style.display = 'none';
+}
+
+// congela um quadro do vídeo num JPEG (Blob) pra leitura e armazenamento
+function captureFrame(video) {
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) return Promise.resolve(null);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+  return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', 0.92));
+}
+
+function showScanBusy(layer) {
+  const view = $('#scan-view', layer);
+  if (!view || $('.scan-busy', view)) return;
+  const busy = document.createElement('div');
+  busy.className = 'scan-busy';
+  busy.innerHTML = '<div class="scan-spinner"></div><div>Lendo a foto…</div>';
+  view.appendChild(busy);
+}
+
+// lê a foto pela IA, decide o destino e transiciona o scanner pra ele
+async function processScan(layer, fileOrBlob) {
+  stopScanStream();
+  showScanBusy(layer);
+
+  let info = null;
+  if (getAiKey()) {
+    try {
+      info = await analyzeProductImage(fileOrBlob);
+    } catch (err) {
+      console.error('[scan] IA falhou', err);
+      toast(err instanceof TypeError
+        ? 'Sem internet pra ler a foto — preencha os dados'
+        : 'Não consegui ler a foto — preencha os dados');
+    }
+  } else {
+    toast('Configure a chave da IA (⚙️) pra leitura automática');
+  }
+
+  const imageData = await compressImage(fileOrBlob);
+
+  // sem leitura útil: cadastro novo só com a foto anexada
+  if (!info || (!info.name && !info.brand)) {
+    popThen(() => openProductForm(null, { image: imageData }));
+    return;
+  }
+
+  const draft = {
+    name: info.name, brand: info.brand, category: info.category,
+    volume: info.volume, gender: info.gender,
+    price: info.price, currency: info.currency, image: imageData,
+  };
+
+  const products = await DB.listProducts();
+  const sameName = (p) => info.name && normBrand(p.name) === normBrand(info.name);
+  const sameBrand = (p) => info.brand && normBrand(p.brand) === normBrand(info.brand);
+  const overlap = (a, b) => {
+    const x = normBrand(a), y = normBrand(b);
+    return !!x && !!y && (x.includes(y) || y.includes(x));
+  };
+
+  // exato: nome bate (e marca também, se a IA leu) → abre direto pra adicionar preço
+  const exact = products.filter((p) => sameName(p) && (!info.brand || sameBrand(p)));
+  if (exact.length === 1) {
+    const id = exact[0].id;
+    popThen(() => openProductDetail(id, { addPrice: true }));
+    return;
+  }
+
+  // parecidos: vários exatos, ou mesma marca + nome que se sobrepõe → confirmar
+  const cands = (exact.length ? exact : products.filter((p) =>
+    (info.brand ? sameBrand(p) : true) && overlap(p.name, info.name)
+  )).slice(0, 6);
+
+  if (cands.length) popThen(() => openScanMatch(draft, cands));
+  else popThen(() => openProductForm(null, draft));
+}
+
+// produto parecido já existe: escolher um (→ adicionar preço) ou cadastrar como novo
+function openScanMatch(draft, candidates) {
+  const rows = candidates.map((p) => `
+    <div class="pick-row" data-pick="${p.id}">
+      ${p.image ? `<img class="li-thumb" src="${p.image}" alt="">` : '<div class="li-thumb placeholder">🧴</div>'}
+      <div class="li-info">
+        <div class="li-name">${esc(p.name)}</div>
+        <div class="li-price muted">${esc(p.brand || '—')}</div>
+      </div>
+      <div class="pick-check">›</div>
+    </div>`).join('');
+  const bg = openSheet(`
+    <h2>Já está no catálogo?</h2>
+    <p class="muted-note">Li <strong>${esc(draft.name || draft.brand || 'o produto')}</strong> na foto. Se for um destes, toque pra adicionar o preço novo:</p>
+    <div class="pick-list" style="margin-top:10px">${rows}</div>
+    <div class="pick-row create" data-new="1" style="margin-top:6px">
+      <div class="li-info"><div class="li-name">+ É um produto novo</div></div>
+      <div class="pick-check">+</div>
+    </div>
+  `);
+  bg.querySelectorAll('[data-pick]').forEach((row) =>
+    row.addEventListener('click', () => popThen(() => openProductDetail(row.dataset.pick, { addPrice: true }))));
+  $('[data-new]', bg).addEventListener('click', () => popThen(() => openProductForm(null, draft)));
+}
+
 // ---------- backup ----------
 async function exportBackup() {
   const data = await DB.exportAll();
@@ -2005,33 +2225,40 @@ async function syncCatalog() {
   }
 }
 
+// ---------- configurações (catálogo + backup + chave da IA) ----------
+function openSettings() {
+  const bg = openSheet(`
+    <h2>Configurações</h2>
+    <div class="section-title">Catálogo</div>
+    <p class="muted-note">Pega as últimas informações publicadas (lojas, produtos e preços). Seus favoritos, anotações e listas não são alterados.</p>
+    <button class="btn" id="bk-sync" style="margin-top:10px">🔄 Sincronizar catálogo</button>
+    <div class="section-title">Backup dos seus dados</div>
+    <p class="muted-note">Backup completo deste aparelho (inclui seus favoritos, anotações e listas). Exporte de vez em quando e importe ao trocar de celular.</p>
+    <button class="btn secondary" id="bk-exp" style="margin-top:10px">⬇️ Exportar backup</button>
+    <button class="btn secondary" id="bk-imp" style="margin-top:10px">⬆️ Importar backup</button>
+    <div class="section-title">Leitura por IA</div>
+    <p class="muted-note">Chave do Google AI Studio (Gemini) pra ler a etiqueta nas fotos do scanner. Fica salva só neste aparelho.</p>
+    <button class="btn secondary" id="bk-ai" style="margin-top:10px">✨ Configurar chave da IA</button>
+  `);
+  $('#bk-sync', bg).addEventListener('click', () => { syncCatalog(); popLayer(); });
+  $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); popLayer(); });
+  $('#bk-imp', bg).addEventListener('click', () => { importBackup(); popLayer(); });
+  $('#bk-ai', bg).addEventListener('click', () => configureAiKey());
+}
+
 // ---------- navegação ----------
 function setTab(tab) {
-  if (tab === 'backup') {
-    const bg = openSheet(`
-      <h2>Catálogo & backup</h2>
-      <div class="section-title">Catálogo</div>
-      <p class="muted-note">Pega as últimas informações publicadas (lojas, produtos e preços). Seus favoritos, anotações e listas não são alterados.</p>
-      <button class="btn" id="bk-sync" style="margin-top:10px">🔄 Sincronizar catálogo</button>
-      <div class="section-title">Backup dos seus dados</div>
-      <p class="muted-note">Backup completo deste aparelho (inclui seus favoritos, anotações e listas). Exporte de vez em quando e importe ao trocar de celular.</p>
-      <button class="btn secondary" id="bk-exp" style="margin-top:10px">⬇️ Exportar backup</button>
-      <button class="btn secondary" id="bk-imp" style="margin-top:10px">⬆️ Importar backup</button>
-    `);
-    $('#bk-sync', bg).addEventListener('click', () => { syncCatalog(); popLayer(); });
-    $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); popLayer(); });
-    $('#bk-imp', bg).addEventListener('click', () => { importBackup(); popLayer(); });
-    return;
-  }
   state.tab = tab;
   if (tab === 'favoritos') clearFilters();
-  document.querySelectorAll('.tabbar button').forEach((b) =>
+  document.querySelectorAll('.tabbar button[data-tab]').forEach((b) =>
     b.classList.toggle('active', b.dataset.tab === tab));
   render();
 }
 
-document.querySelectorAll('.tabbar button').forEach((b) =>
+document.querySelectorAll('.tabbar button[data-tab]').forEach((b) =>
   b.addEventListener('click', () => setTab(b.dataset.tab)));
+$('#scan-btn').addEventListener('click', () => openScanner());
+$('#settings-btn').addEventListener('click', () => openSettings());
 
 // registra o service worker (modo offline / instalável)
 if ('serviceWorker' in navigator) {
