@@ -2,6 +2,7 @@
 
 const CATEGORIES = ['Perfumes'];
 const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
+const PAGE_SIZE = 24;   // quantos produtos por página (botão "Ver mais" revela o resto)
 const CURRENCIES = [
   { code: 'BRL', label: 'R$ Real (BRL)' },
   { code: 'USD', label: '$ Dólar (USD)' },
@@ -36,7 +37,13 @@ const state = {
   priceMax: null,      // preço máximo (null = sem limite)
   priceSort: null,     // null | 'asc' | 'desc'
   lojasView: 'lista',  // lista | mapa
+  visible: PAGE_SIZE,  // quantos produtos estão renderizados agora (paginação incremental)
 };
+
+// Assinatura da última consulta renderizada e cache da lista completa já filtrada/ordenada.
+// Servem à paginação: quando a consulta muda, zera a página; o "Ver mais" só anexa.
+let _lastQuerySig = null;
+let _catalogCache = null;
 
 function activeFilterCount() {
   return state.brands.length + state.genders.length + state.stores.length +
@@ -117,6 +124,16 @@ async function render() {
 
 async function renderCatalog() {
   const onlyFav = state.tab === 'favoritos';
+
+  // Paginação incremental: se a consulta (aba/busca/filtros) mudou, volta à 1ª página.
+  // O "Ver mais" só altera state.visible, não a assinatura — então não reseta.
+  const querySig = JSON.stringify([
+    state.tab, state.search.trim(), state.category,
+    state.brands, state.genders, state.stores,
+    state.priceMin, state.priceMax, state.priceSort,
+  ]);
+  if (querySig !== _lastQuerySig) { state.visible = PAGE_SIZE; _lastQuerySig = querySig; }
+
   let products = await DB.listProducts();
 
   if (onlyFav) products = products.filter((p) => p.favorite);
@@ -197,6 +214,9 @@ async function renderCatalog() {
     ...(state.priceSort ? [`<button class="achip" data-rm="sort">${state.priceSort === 'asc' ? '↑ Menor preço' : '↓ Maior preço'} ✕</button>`] : []),
   ].join('');
 
+  // guarda a lista completa filtrada/ordenada pra o "Ver mais" anexar sem recomputar
+  _catalogCache = { products, summaries, inAnyList };
+
   let body;
   if (!products.length) {
     const filtered = count > 0 || state.search.trim();
@@ -207,7 +227,10 @@ async function renderCatalog() {
         : (onlyFav ? 'Nenhum favorito ainda.<br>Toque na estrela de um produto.' : 'Catálogo vazio.<br>Toque no + pra cadastrar o primeiro achado.')}</p>
     </div>`;
   } else {
-    body = `<div class="grid">${products.map((p, i) => productCard(p, summaries[i], inAnyList.has(p.id))).join('')}</div>`;
+    const shown = Math.min(state.visible, products.length);
+    const cards = products.slice(0, shown)
+      .map((p, i) => productCard(p, summaries[i], inAnyList.has(p.id))).join('');
+    body = `<div class="grid">${cards}</div>${catalogFooter(shown, products.length)}`;
   }
 
   app.innerHTML = `
@@ -249,12 +272,55 @@ async function renderCatalog() {
       else if (rm === 'sort') { state.priceSort = null; }
       render();
     }));
-  app.querySelectorAll('.card .fav').forEach((b) =>
+  bindCards(app);
+  const verMais = $('#ver-mais');
+  if (verMais) verMais.addEventListener('click', appendMore);
+}
+
+// Liga os eventos dos cards de produto dentro de `root` (a grade inteira no render
+// normal, ou só os cards recém-anexados pelo "Ver mais").
+function bindCards(root) {
+  root.querySelectorAll('.card .fav').forEach((b) =>
     b.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(b.dataset.id); }));
-  app.querySelectorAll('.card .inlist').forEach((b) =>
+  root.querySelectorAll('.card .inlist').forEach((b) =>
     b.addEventListener('click', (e) => { e.stopPropagation(); openAddToList(b.dataset.id); }));
-  app.querySelectorAll('.card[data-id]').forEach((c) =>
+  root.querySelectorAll('.card[data-id]').forEach((c) =>
     c.addEventListener('click', () => openProductDetail(c.dataset.id)));
+}
+
+// Rodapé do catálogo: "X de Y" + botão "Ver mais" enquanto houver itens ocultos.
+function catalogFooter(shown, total) {
+  if (!total) return '';
+  const remaining = total - shown;
+  const counter = `<span class="count">${shown} de ${total} ${total === 1 ? 'produto' : 'produtos'}</span>`;
+  const button = remaining > 0
+    ? `<button class="btn secondary" id="ver-mais">Ver mais ${Math.min(PAGE_SIZE, remaining)} de ${remaining}</button>`
+    : '';
+  return `<div class="load-more" id="catalog-foot">${counter}${button}</div>`;
+}
+
+// "Ver mais": anexa a próxima página à grade existente (sem re-render, preservando o
+// scroll) e atualiza o rodapé. Usa o cache da última lista filtrada/ordenada.
+function appendMore() {
+  if (!_catalogCache) return;
+  const { products, summaries, inAnyList } = _catalogCache;
+  const grid = app.querySelector('.grid');
+  const foot = app.querySelector('#catalog-foot');
+  if (!grid) return;
+  const from = state.visible;
+  state.visible = Math.min(state.visible + PAGE_SIZE, products.length);
+
+  const tmp = document.createElement('div');
+  tmp.innerHTML = products.slice(from, state.visible)
+    .map((p, i) => productCard(p, summaries[from + i], inAnyList.has(p.id))).join('');
+  bindCards(tmp);
+  while (tmp.firstChild) grid.appendChild(tmp.firstChild);
+
+  if (foot) {
+    foot.outerHTML = catalogFooter(state.visible, products.length);
+    const verMais = app.querySelector('#ver-mais');
+    if (verMais) verMais.addEventListener('click', appendMore);
+  }
 }
 
 // Painel de filtros (Marca, Loja, Categoria) — abre de baixo pra cima
@@ -337,7 +403,7 @@ function debouncedRerenderList() {
 
 function productCard(p, summary, inList = false) {
   const thumb = p.image
-    ? `<img class="thumb" src="${p.image}" alt="">`
+    ? `<img class="thumb" src="${p.image}" alt="" loading="lazy" decoding="async">`
     : `<div class="thumb placeholder">🧴</div>`;
   let price;
   if (summary.best) {
