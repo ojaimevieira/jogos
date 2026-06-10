@@ -1499,11 +1499,11 @@ async function openProductForm(existing) {
     <label class="field"><span>Nome do produto *</span>
       <input class="input" id="p-name" value="${esc(product.name)}" placeholder="Ex.: Sauvage EDT"></label>
     <div class="row">
-      <label class="field"><span>Marca</span>
+      <div class="field"><span>Marca</span>
         <div class="input select-like" id="p-brand" role="button" tabindex="0">
           <span id="p-brand-label" class="${selectedBrandName ? '' : 'ph'}">${selectedBrandName ? esc(selectedBrandName) : 'Selecionar marca'}</span>
           <span class="chev">▾</span>
-        </div></label>
+        </div></div>
       <label class="field"><span>Tamanho</span>
         <input class="input" id="p-volume" value="${esc(product.volume || '')}" placeholder="100 ml"></label>
     </div>
@@ -1627,7 +1627,7 @@ async function openProductForm(existing) {
     selectedBrandId = brand ? brand.id : null;
     selectedBrandName = brand ? brand.name : '';
     updateBrandField();
-  });
+  }).catch((err) => { console.error('[marca]', err); toast('Erro ao abrir marcas'); });
   const brandField = $('#p-brand', bg);
   brandField.addEventListener('click', openBrand);
   brandField.addEventListener('keydown', (e) => {

@@ -322,8 +322,8 @@ main { padding: 8px 16px 16px; }
 .sheet-back:active { background: var(--border); }
 .sheet h2 { margin: 4px 0 16px; font-size: 19px; }
 
-label.field { display: block; margin-bottom: 14px; }
-label.field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+label.field, div.field { display: block; margin-bottom: 14px; }
+label.field > span, div.field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .input {
   width: 100%; background: var(--surface-2); border: 1px solid var(--border);
   color: var(--text); border-radius: 12px; padding: 12px 14px; font-size: 15px; outline: none;
