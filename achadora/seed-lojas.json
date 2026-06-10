@@ -1,49 +1,49 @@
 {
-  "version": 3,
+  "version": 4,
   "exportedAt": "2026-06-10",
   "source": "Lojas (Ciudad del Este)",
   "stores": [
     {
       "id": "store-mega-eletronicos",
       "name": "Mega Eletrônicos Paraguai",
-      "address": "Monseñor Rodríguez esquina, Cd. del Este 100136, Paraguai",
-      "lat": -25.51078,
-      "lng": -54.61135
+      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
+      "lat": -25.50892,
+      "lng": -54.60674
     },
     {
       "id": "store-shopping-china",
       "name": "Shopping China Importados",
       "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
-      "lat": -25.5082,
-      "lng": -54.6068
+      "lat": -25.50913,
+      "lng": -54.60732
     },
     {
       "id": "store-atacado-connect",
       "name": "Atacado Connect",
-      "address": "Av. Adrián Jara, Cd. del Este 100136, Paraguai",
-      "lat": -25.50955,
-      "lng": -54.6093
+      "address": "Av. Adrián Jara",
+      "lat": -25.51081,
+      "lng": -54.61271
     },
     {
       "id": "store-cellshop",
       "name": "CellShop",
-      "address": "Av. Carlos Antonio Lopez y, Av. Adrián Jara 7000, Cd. del Este 100136, Paraguai",
-      "lat": -25.50967,
-      "lng": -54.60797
+      "address": "Av. Adrián Jara 7000",
+      "lat": -25.51062,
+      "lng": -54.61212
     },
     {
       "id": "store-elegancia-company",
       "name": "Elegancia Company",
-      "address": "Edificio Victoria, Av. Adrián Jara Esquina, Cd. del Este 100136, Paraguai",
-      "lat": -25.50945,
-      "lng": -54.6088
+      "address": "Av. Adrián Jara",
+      "lat": -25.51098,
+      "lng": -54.6133
     },
     {
       "id": "store-brands-for-less",
       "name": "Brands For Less Paraguay",
-      "address": "Monseñor Rodríguez, Cd. del Este 100136, Paraguai",
-      "lat": -25.51045,
-      "lng": -54.6108
+      "address": "Av. Luis Maria Argaña, Cd. del Este 100135, Paraguai",
+      "lat": -25.50934,
+      "lng": -54.60791
     }
   ],
   "products": [],
