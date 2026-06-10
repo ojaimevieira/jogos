@@ -671,6 +671,24 @@ async function geocodeAddress(q) {
   }
 }
 
+// busca várias sugestões de lugar (autocomplete do editor). Viés p/ Paraguai e
+// Brasil — domínio da Achadora (Ciudad del Este e fronteira). Retorna lista de
+// { lat, lng, label }.
+async function geocodeSearch(q, limit = 5) {
+  if (!q || q.trim().length < 3) return [];
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=0'
+    + '&accept-language=pt&countrycodes=py,br&limit=' + limit
+    + '&q=' + encodeURIComponent(q.trim());
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.map((d) => ({ lat: parseFloat(d.lat), lng: parseFloat(d.lon), label: d.display_name }));
+  } catch (e) {
+    return [];
+  }
+}
+
 // abre a loja no Google Maps (app nativo no celular)
 function openMapsApp(store) {
   if (!store) return;
@@ -1504,7 +1522,13 @@ async function openStoreForm(id) {
         </svg>
       </div>
       <div class="map-overlay top-left">
-        <button class="map-pill" type="button" id="st-find">🔎 Buscar endereço</button>
+        <div class="map-search" id="map-search">
+          <span class="ic">🔎</span>
+          <input class="map-search-input" id="st-search" type="text"
+                 placeholder="Buscar endereço ou lugar" autocomplete="off" enterkeyhint="search">
+          <button class="map-search-clear" type="button" id="st-search-clear" aria-label="Limpar">✕</button>
+          <div class="map-suggest" id="st-suggest" hidden></div>
+        </div>
       </div>
       <div class="map-overlay top-right zoom">
         <button class="map-fab sm" type="button" id="st-zin" aria-label="Aproximar">+</button>
@@ -1580,13 +1604,63 @@ async function openStoreForm(id) {
         () => toast('Não consegui pegar o GPS'),
         { enableHighAccuracy: true, timeout: 10000 });
     });
-    $('#st-find', bg).addEventListener('click', async () => {
-      const q = $('#st-addr', bg).value.trim();
-      if (!q) return toast('Digite o endereço primeiro');
-      toast('Procurando endereço…');
-      const r = await geocodeAddress(q);
-      if (!r) return toast('Endereço não encontrado');
-      goTo(r.lat, r.lng, 16);
+    // busca dentro do mapa com autocomplete (estilo Google Maps)
+    const search = $('#st-search', bg);
+    const suggest = $('#st-suggest', bg);
+    const searchBox = $('#map-search', bg);
+    const clearBtn = $('#st-search-clear', bg);
+    let searchTimer = null, lastQuery = '';
+
+    const closeSuggest = () => { suggest.hidden = true; suggest.innerHTML = ''; };
+    const renderSuggest = (items) => {
+      if (!items.length) { closeSuggest(); return; }
+      suggest.innerHTML = items.map((it, i) => {
+        const parts = it.label.split(',').map((s) => s.trim());
+        const ttl = parts.shift();
+        const sub = parts.join(', ');
+        return `<button type="button" data-i="${i}">
+          <span class="pin">📍</span>
+          <span class="lbl"><span class="ttl">${esc(ttl)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
+        </button>`;
+      }).join('');
+      suggest.hidden = false;
+      suggest.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+        const it = items[+b.dataset.i];
+        search.value = it.label.split(',')[0].trim();
+        searchBox.classList.add('has-text');
+        const addr = $('#st-addr', bg);
+        if (addr && !addr.value.trim()) addr.value = it.label;
+        closeSuggest();
+        goTo(it.lat, it.lng, 17);
+      }));
+    };
+
+    search.addEventListener('input', () => {
+      const q = search.value.trim();
+      searchBox.classList.toggle('has-text', q.length > 0);
+      clearTimeout(searchTimer);
+      if (q.length < 3) { closeSuggest(); return; }
+      searchTimer = setTimeout(async () => {
+        if (q === lastQuery) return;
+        lastQuery = q;
+        const items = await geocodeSearch(q);
+        if (search.value.trim() === q) renderSuggest(items); // ignora resposta atrasada
+      }, 400);
+    });
+    search.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const first = suggest.querySelector('button');
+      if (first) first.click();
+    });
+    clearBtn.addEventListener('click', () => {
+      search.value = ''; searchBox.classList.remove('has-text');
+      closeSuggest(); search.focus();
+    });
+    map.on('movestart', closeSuggest);
+    // fecha o dropdown ao tocar fora da caixa (escopado ao sheet, sem vazar listener)
+    bg.addEventListener('pointerdown', (e) => {
+      if (!searchBox.contains(e.target)) closeSuggest();
     });
   })();
 
