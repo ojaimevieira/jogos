@@ -30,14 +30,21 @@ const state = {
   category: 'Todos',   // chip de categoria (rápido)
   brands: [],          // marcas selecionadas no painel (vazio = todas)
   stores: [],          // ids de loja selecionados no painel (vazio = todas)
+  priceMin: null,      // preço mínimo (null = sem limite)
+  priceMax: null,      // preço máximo (null = sem limite)
+  priceSort: null,     // null | 'asc' | 'desc'
   lojasView: 'lista',  // lista | mapa
 };
 
 function activeFilterCount() {
-  return state.brands.length + state.stores.length;
+  return state.brands.length + state.stores.length +
+    (state.priceMin != null || state.priceMax != null ? 1 : 0) +
+    (state.priceSort != null ? 1 : 0);
 }
 function clearFilters() {
   state.brands = []; state.stores = [];
+  state.priceMin = null; state.priceMax = null;
+  state.priceSort = null;
 }
 
 // Marcas distintas presentes no banco (pra preencher o filtro)
@@ -130,6 +137,33 @@ async function renderCatalog() {
     summaries = kept.map((x) => x[1]);
   }
 
+  // filtro por faixa de preço: usa o menor preço cadastrado do produto
+  if (state.priceMin != null || state.priceMax != null) {
+    const kept = products
+      .map((p, i) => [p, summaries[i]])
+      .filter(([, s]) => {
+        if (!s.best) return false; // sem preço não entra na faixa
+        const v = s.best.value;
+        if (state.priceMin != null && v < state.priceMin) return false;
+        if (state.priceMax != null && v > state.priceMax) return false;
+        return true;
+      });
+    products = kept.map((x) => x[0]);
+    summaries = kept.map((x) => x[1]);
+  }
+
+  // ordenação por preço
+  if (state.priceSort) {
+    const paired = products.map((p, i) => [p, summaries[i]]);
+    paired.sort(([, a], [, b]) => {
+      const av = a.best?.value ?? Infinity;
+      const bv = b.best?.value ?? Infinity;
+      return state.priceSort === 'asc' ? av - bv : bv - av;
+    });
+    products = paired.map((x) => x[0]);
+    summaries = paired.map((x) => x[1]);
+  }
+
   const stores = await DB.listStores();
   const storeName = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const count = activeFilterCount();
@@ -145,9 +179,18 @@ async function renderCatalog() {
     .join('');
 
   // chips dos filtros ativos do painel (removíveis)
+  const priceChipLabel = (state.priceMin != null || state.priceMax != null)
+    ? (state.priceMin != null && state.priceMax != null
+        ? `${formatPrice(state.priceMin)} – ${formatPrice(state.priceMax)}`
+        : (state.priceMin != null
+            ? `≥ ${formatPrice(state.priceMin)}`
+            : `≤ ${formatPrice(state.priceMax)}`))
+    : null;
   const activeChips = [
     ...state.brands.map((b) => `<button class="achip" data-rm="brand" data-val="${esc(b)}">${esc(b)} ✕</button>`),
     ...state.stores.map((id) => `<button class="achip" data-rm="store" data-val="${esc(id)}">🏪 ${esc(storeName[id] || 'Loja')} ✕</button>`),
+    ...(priceChipLabel ? [`<button class="achip" data-rm="price">💰 ${esc(priceChipLabel)} ✕</button>`] : []),
+    ...(state.priceSort ? [`<button class="achip" data-rm="sort">${state.priceSort === 'asc' ? '↑ Menor preço' : '↓ Maior preço'} ✕</button>`] : []),
   ].join('');
 
   let body;
@@ -197,6 +240,8 @@ async function renderCatalog() {
       if (rm === 'all') clearFilters();
       else if (rm === 'brand') state.brands = state.brands.filter((x) => x !== val);
       else if (rm === 'store') state.stores = state.stores.filter((x) => x !== val);
+      else if (rm === 'price') { state.priceMin = null; state.priceMax = null; }
+      else if (rm === 'sort') { state.priceSort = null; }
       render();
     }));
   app.querySelectorAll('.card .fav').forEach((b) =>
@@ -221,26 +266,56 @@ async function openFilterSheet() {
   const storeSec = stores.length
     ? `<div class="section-title">Loja</div><div class="fchips">${stores.map((s) => fchip(s.id, s.name, 'stores')).join('')}</div>` : '';
 
+  const priceSec = `<div class="section-title">Faixa de preço</div>
+    <div class="price-range">
+      <input type="number" inputmode="decimal" min="0" step="0.01" id="f-price-min" placeholder="Mín. (R$)" value="${state.priceMin != null ? state.priceMin : ''}" />
+      <span class="price-range-sep">—</span>
+      <input type="number" inputmode="decimal" min="0" step="0.01" id="f-price-max" placeholder="Máx. (R$)" value="${state.priceMax != null ? state.priceMax : ''}" />
+    </div>
+    <div class="section-title" style="margin-top:14px">Ordenar por preço</div>
+    <div class="fchips">
+      <button class="fchip sort-btn ${state.priceSort === 'asc' ? 'active' : ''}" data-sort="asc">↑ Menor primeiro</button>
+      <button class="fchip sort-btn ${state.priceSort === 'desc' ? 'active' : ''}" data-sort="desc">↓ Maior primeiro</button>
+    </div>`;
+
   const bg = openSheet(`
     <h2>Filtros</h2>
     ${brandSec}
     ${storeSec}
+    ${priceSec}
     <div class="row" style="margin-top:20px">
       <button class="btn secondary" id="f-clear">Limpar</button>
       <button class="btn" id="f-apply">Aplicar</button>
     </div>
   `);
 
-  bg.querySelectorAll('.fchip').forEach((b) =>
+  let selSort = state.priceSort;
+
+  bg.querySelectorAll('.fchip:not(.sort-btn)').forEach((b) =>
     b.addEventListener('click', () => {
       const { group, val } = b.dataset;
       if (sel[group].has(val)) sel[group].delete(val); else sel[group].add(val);
       b.classList.toggle('active');
     }));
+  bg.querySelectorAll('.sort-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      const chosen = b.dataset.sort;
+      selSort = selSort === chosen ? null : chosen;
+      bg.querySelectorAll('.sort-btn').forEach((x) => x.classList.toggle('active', x.dataset.sort === selSort));
+    }));
   $('#f-clear', bg).addEventListener('click', () => { clearFilters(); closeSheet(bg); render(); });
   $('#f-apply', bg).addEventListener('click', () => {
     state.brands = [...sel.brands];
     state.stores = [...sel.stores];
+    const min = parseFloat($('#f-price-min', bg).value);
+    const max = parseFloat($('#f-price-max', bg).value);
+    state.priceMin = isNaN(min) ? null : min;
+    state.priceMax = isNaN(max) ? null : max;
+    // se inverteram os limites, troca pra não zerar o resultado
+    if (state.priceMin != null && state.priceMax != null && state.priceMin > state.priceMax) {
+      [state.priceMin, state.priceMax] = [state.priceMax, state.priceMin];
+    }
+    state.priceSort = selSort;
     closeSheet(bg);
     render();
   });
@@ -279,10 +354,7 @@ function productCard(p, summary, inList = false) {
 }
 
 async function toggleFav(id) {
-  const p = await DB.getProduct(id);
-  if (!p) return;
-  p.favorite = !p.favorite;
-  await DB.saveProduct(p);
+  await DB.toggleFavorite(id);
   render();
 }
 
@@ -972,7 +1044,7 @@ async function openStoreForm(id) {
 
 // ---------- formulário de produto ----------
 async function openProductForm(existing) {
-  const product = existing || { name: '', brand: '', category: 'Perfumes', volume: '', notes: '', image: null };
+  const product = existing || { name: '', brand: '', category: 'Perfumes', volume: '', userNote: '', image: null };
   const stores = await DB.listStores();
   const storeOptions = stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   const catOptions = CATEGORIES.map((c) => `<option value="${c}" ${product.category === c ? 'selected' : ''}>${c}</option>`).join('');
@@ -1011,7 +1083,7 @@ async function openProductForm(existing) {
     `}
 
     <label class="field"><span>Anotações</span>
-      <textarea class="input" id="p-notes" placeholder="Cheirou bem, promoção, etc.">${esc(product.notes || '')}</textarea></label>
+      <textarea class="input" id="p-notes" placeholder="Cheirou bem, promoção, etc.">${esc(product.userNote || '')}</textarea></label>
 
     <button class="btn" id="p-save">Salvar</button>
   `);
@@ -1051,9 +1123,10 @@ async function openProductForm(existing) {
       brand: $('#p-brand', bg).value.trim(),
       volume: $('#p-volume', bg).value.trim(),
       category: $('#p-cat', bg).value,
-      notes: $('#p-notes', bg).value.trim(),
       image: imageData,
     });
+    // anotação pessoal vive separada do catálogo (não é tocada por sync)
+    await DB.setUserNote(saved.id, $('#p-notes', bg).value.trim());
     // preço inicial (só no cadastro novo)
     if (!existing) {
       const priceVal = parsePrice($('#p-price', bg).value);
@@ -1112,7 +1185,8 @@ async function openProductDetail(id) {
         <span class="tag">${esc(p.category || 'Outros')}</span>
         ${p.volume ? `<span class="tag">${esc(p.volume)}</span>` : ''}
       </div>
-      ${p.notes ? `<p class="muted-note" style="margin-top:12px">📝 ${esc(p.notes)}</p>` : ''}
+      ${p.notes ? `<p class="muted-note" style="margin-top:12px">ℹ️ ${esc(p.notes)}</p>` : ''}
+      ${p.userNote ? `<p class="muted-note" style="margin-top:6px">📝 ${esc(p.userNote)}</p>` : ''}
 
       <div class="section-title">Comparativo de preços</div>
       <div class="price-table">${priceRows}</div>
@@ -1221,15 +1295,35 @@ function importBackup() {
   input.click();
 }
 
-// Carrega o catálogo pronto da Lattafa (hospedado junto do app)
-async function loadSeed(file, label) {
+// Sincroniza o catálogo publicado (manifesto catalog.json -> arquivos de produtos).
+// Conflito-zero: só mexe nos registros de catálogo; favoritos, anotações, listas
+// e cadastros do próprio usuário ficam intactos.
+async function syncCatalog() {
   try {
-    toast('Carregando ' + label + '…');
-    const res = await fetch(file + '?t=' + Date.now(), { cache: 'no-store' });
+    toast('Sincronizando…');
+    const res = await fetch('catalog.json?t=' + Date.now(), { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    if (!data.products || !data.products.length) throw new Error('arquivo vazio');
-    await DB.mergeCatalog(data);
+    const manifest = await res.json();
+    const local = await DB.getCatalogVersion();
+    if ((manifest.version || 0) <= local) {
+      toast('Catálogo já está atualizado ✓');
+      return;
+    }
+
+    // baixa todos os arquivos do manifesto e junta tudo numa união só
+    const union = { products: [], stores: [], prices: [] };
+    for (const src of manifest.sources || []) {
+      const r = await fetch(src.file + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' em ' + src.file);
+      const data = await r.json();
+      union.products.push(...(data.products || []));
+      union.stores.push(...(data.stores || []));
+      union.prices.push(...(data.prices || []));
+    }
+
+    const result = await DB.syncCatalog(union);
+    await DB.setCatalogVersion(manifest.version);
+
     // volta pra aba Catálogo (sem filtros) pra garantir que os produtos apareçam
     state.tab = 'catalogo';
     clearFilters();
@@ -1237,9 +1331,11 @@ async function loadSeed(file, label) {
     document.querySelectorAll('.tabbar button').forEach((b) =>
       b.classList.toggle('active', b.dataset.tab === 'catalogo'));
     await render();
-    toast(data.products.length + ' perfumes carregados ✨');
+
+    const extra = result.removed ? ` · ${result.removed} removido(s)` : '';
+    toast(`Catálogo atualizado ✨ ${result.upserted} produto(s)${extra}`);
   } catch (e) {
-    toast('Erro ao carregar: ' + (e.message || e));
+    toast('Erro ao sincronizar: ' + (e.message || e));
   }
 }
 
@@ -1247,29 +1343,18 @@ async function loadSeed(file, label) {
 function setTab(tab) {
   if (tab === 'backup') {
     const bg = openSheet(`
-      <h2>Backup dos dados</h2>
-      <p class="muted-note">Seus dados ficam só neste aparelho. Exporte de vez em quando pra não perder, e importe ao trocar de celular.</p>
-      <button class="btn" id="bk-exp" style="margin-top:14px">⬇️ Exportar backup</button>
+      <h2>Catálogo & backup</h2>
+      <div class="section-title">Catálogo</div>
+      <p class="muted-note">Pega as últimas informações publicadas (lojas, produtos e preços). Seus favoritos, anotações e listas não são alterados.</p>
+      <button class="btn" id="bk-sync" style="margin-top:10px">🔄 Sincronizar catálogo</button>
+      <div class="section-title">Backup dos seus dados</div>
+      <p class="muted-note">Backup completo deste aparelho (inclui seus favoritos, anotações e listas). Exporte de vez em quando e importe ao trocar de celular.</p>
+      <button class="btn secondary" id="bk-exp" style="margin-top:10px">⬇️ Exportar backup</button>
       <button class="btn secondary" id="bk-imp" style="margin-top:10px">⬆️ Importar backup</button>
-      <div class="section-title">Catálogos prontos</div>
-      <p class="muted-note">Adiciona perfumes já cadastrados (com foto e dados). Pode rodar mais de uma vez sem duplicar.</p>
-      <button class="btn secondary" id="bk-lattafa" style="margin-top:10px">🌹 Carregar catálogo Lattafa (143 perfumes)</button>
-      <button class="btn secondary" id="bk-alwataniah" style="margin-top:10px">🌙 Carregar catálogo Al Wataniah (43 perfumes)</button>
     `);
+    $('#bk-sync', bg).addEventListener('click', () => { syncCatalog(); closeSheet(bg); });
     $('#bk-exp', bg).addEventListener('click', () => { exportBackup(); closeSheet(bg); });
     $('#bk-imp', bg).addEventListener('click', () => { importBackup(); closeSheet(bg); });
-    $('#bk-lattafa', bg).addEventListener('click', () => {
-      if (confirm('Adicionar 143 perfumes Lattafa ao seu catálogo?')) {
-        loadSeed('seed-lattafa.json', 'Lattafa');
-        closeSheet(bg);
-      }
-    });
-    $('#bk-alwataniah', bg).addEventListener('click', () => {
-      if (confirm('Adicionar 43 perfumes Al Wataniah ao seu catálogo?')) {
-        loadSeed('seed-alwataniah.json', 'Al Wataniah');
-        closeSheet(bg);
-      }
-    });
     return;
   }
   state.tab = tab;
