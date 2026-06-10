@@ -82,6 +82,36 @@ const normBrand = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, ''
 const app = document.getElementById('app');
 const $ = (sel, root = document) => root.querySelector(sel);
 
+// Atualiza `host` a partir de uma string HTML reaproveitando os <img> de mesmo
+// `src` que já estão na tela, em vez de recriá-los. Recriar um <img> base64 força
+// o navegador a decodificar a imagem de novo, e o quadro em branco até a
+// decodificação terminar é o que causa a "piscada" quando uma camada reaparece
+// (modal/página fechando expõe a de baixo, repintada pelo onResume) ou quando o
+// catálogo é repintado após uma ação. Transplantar o nó vivo preserva o bitmap; o
+// resto da árvore é trocado de uma vez (atômico, sem quadro em branco). Use no
+// lugar de `host.innerHTML = ...` em telas que mostram imagens.
+function setHtml(host, html) {
+  const next = host.cloneNode(false); // mesmo contexto de parsing, fora da árvore
+  next.innerHTML = html;
+
+  const reusable = new Map(); // src -> fila de <img> vivos reaproveitáveis
+  for (const img of host.querySelectorAll('img')) {
+    if (!reusable.has(img.src)) reusable.set(img.src, []);
+    reusable.get(img.src).push(img);
+  }
+  for (const fresh of next.querySelectorAll('img')) {
+    const queue = reusable.get(fresh.src);
+    if (!queue || !queue.length) continue;
+    const live = queue.shift();
+    // sincroniza atributos (classe, alt…) sem tocar no src → sem nova decodificação
+    for (const { name, value } of fresh.attributes) {
+      if (name !== 'src' && live.getAttribute(name) !== value) live.setAttribute(name, value);
+    }
+    fresh.replaceWith(live);
+  }
+  host.replaceChildren(...next.childNodes);
+}
+
 // ---------- utilidades ----------
 function toast(msg) {
   let t = $('.toast');
@@ -388,7 +418,7 @@ async function renderCatalog() {
     body = `<div class="grid">${cards}</div>${catalogFooter(shown, products.length)}`;
   }
 
-  app.innerHTML = `
+  setHtml(app, `
     <header class="app-header">
       <h1>✨ Achadora</h1>
       <div class="subtitle">${onlyFav ? 'Seus favoritos' : 'Seu catálogo de garimpo'}</div>
@@ -404,7 +434,7 @@ async function renderCatalog() {
     ${onlyFav || allCategories.length <= 1 ? '' : `<div class="chips">${catChips}</div>`}
     ${count ? `<div class="active-filters">${activeChips}<button class="achip clear" data-rm="all">Limpar</button></div>` : ''}
     <main>${body}</main>
-  `;
+  `);
 
   $('#search').addEventListener('input', (e) => {
     state.search = e.target.value;
@@ -898,7 +928,7 @@ async function paintListDetail(bg, id) {
         </div>`).join('')
     : '<p class="muted-note">Lista vazia. Toque em "Adicionar produtos".</p>';
 
-  $('.page-body', bg).innerHTML = `
+  setHtml($('.page-body', bg), `
     <div class="detail">
       <div class="brand">${list.storeId ? '🏪 ' + esc(storeName[list.storeId] || 'Loja') : 'Sem loja definida'}</div>
       <div class="li-list">${itemRows}</div>
@@ -910,7 +940,7 @@ async function paintListDetail(bg, id) {
       </div>
       <button class="btn danger" id="l-del" style="margin-top:10px">Excluir lista</button>
     </div>
-  `;
+  `);
 
   // modelo mutável pra atualizar quantidades/total sem repintar a folha inteira
   const model = rows;
@@ -982,12 +1012,12 @@ async function openProductPicker(listId) {
     const ql = q.trim().toLowerCase();
     const filtered = (ql ? products.filter((p) => `${p.name} ${p.brand || ''}`.toLowerCase().includes(ql)) : products).slice(0, 80);
     const host = $('#pick-list', bg);
-    host.innerHTML = filtered.map((p) => `
+    setHtml(host, filtered.map((p) => `
       <div class="pick-row ${inList.has(p.id) ? 'on' : ''}" data-pick="${p.id}">
         ${p.image ? `<img class="li-thumb" src="${p.image}" alt="">` : '<div class="li-thumb placeholder">🧴</div>'}
         <div class="li-info"><div class="li-name">${esc(p.name)}</div><div class="li-price muted">${esc(p.brand || '')}</div></div>
         <div class="pick-check">${inList.has(p.id) ? '✓' : '+'}</div>
-      </div>`).join('') || '<p class="muted-note">Nada encontrado.</p>';
+      </div>`).join('') || '<p class="muted-note">Nada encontrado.</p>');
     host.querySelectorAll('[data-pick]').forEach((row) =>
       row.addEventListener('click', async () => {
         const pid = row.dataset.pick;
@@ -1859,7 +1889,7 @@ async function paintProductDetail(bg, id) {
     ? `<img class="detail-hero" src="${p.image}" alt="">`
     : `<div class="detail-hero placeholder">🧴</div>`;
 
-  $('.page-body', bg).innerHTML = `
+  setHtml($('.page-body', bg), `
     <div class="detail">
       ${hero}
       <div class="brand">${esc(p.brand || '—')}</div>
@@ -1882,7 +1912,7 @@ async function paintProductDetail(bg, id) {
       </div>
       <button class="btn danger" id="del-btn" style="margin-top:10px">Excluir produto</button>
     </div>
-  `;
+  `);
 
   $('#fav-btn', bg).addEventListener('click', async () => { await toggleFav(id); paintProductDetail(bg, id); });
   $('#edit-btn', bg).addEventListener('click', async () => openProductForm(await DB.getProduct(id)));
