@@ -1,7 +1,17 @@
 // Achadora — lógica da interface (vanilla JS, sem dependências)
 
+// Categorias-semente. A lista real é aberta: cresce conforme você cadastra
+// produtos com categorias novas (ex.: "Celular"). Usada só como sugestão/base.
 const CATEGORIES = ['Perfumes'];
 const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
+
+// Reúne as categorias conhecidas (sementes + as já usadas nos produtos), únicas
+// e ordenadas em pt-BR. Serve pros chips do catálogo e pras sugestões do form.
+function categoriesFrom(products) {
+  const set = new Set(CATEGORIES);
+  for (const p of products) if (p.category) set.add(p.category);
+  return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
 const PAGE_SIZE = 24;   // quantos produtos por página (botão "Ver mais" revela o resto)
 const CURRENCIES = [
   { code: 'BRL', label: 'R$ Real (BRL)' },
@@ -160,17 +170,21 @@ async function analyzeProductImage(file) {
   const data = await imageBase64ForAi(file);
 
   const prompt = [
-    'Você cataloga perfumes a partir da FOTO da embalagem/frasco.',
+    'Você cataloga produtos a partir da FOTO da embalagem/etiqueta.',
     'Extraia SOMENTE o que está visível e legível. Pode reconhecer logos e',
     'romanizar texto em árabe, mas NÃO pesquise nem invente: se um campo não dá',
     'pra ler com certeza, devolva "".',
     'Campos:',
-    '- name: nome do perfume. Se a concentração aparecer (EDT, EDP, Parfum,',
-    '  Eau Fraiche...), inclua no fim. Ex.: "Asad EDP".',
-    '- brand: a marca, sempre em letras latinas.',
-    '- volume: o tamanho como está no frasco. Ex.: "100 ml".',
-    '- gender: traduza para exatamente "Masculino", "Feminino" ou "Unissex".',
-    '  Sem indício no rótulo, devolva "".',
+    '- name: nome/modelo do produto como aparece. Se for perfume e a concentração',
+    '  aparecer (EDT, EDP, Parfum, Eau Fraiche...), inclua no fim. Ex.: "Asad EDP",',
+    '  "Galaxy A17".',
+    '- brand: a marca/fabricante, sempre em letras latinas.',
+    '- category: o tipo de produto, em uma palavra em português. Ex.: "Perfumes",',
+    '  "Celular", "Tênis", "Relógio". Sem certeza, devolva "".',
+    '- volume: SÓ se for perfume ou líquido, o tamanho como está no frasco. Ex.:',
+    '  "100 ml". Para outros produtos, devolva "".',
+    '- gender: SÓ para perfume ou roupa, traduza para exatamente "Masculino",',
+    '  "Feminino" ou "Unissex". Sem indício no rótulo, devolva "".',
     '- price: se houver ETIQUETA DE PREÇO visível, só o número (use ponto',
     '  decimal, ex.: "45" ou "45.90"). Sem etiqueta de preço, devolva "".',
     '- currency: a moeda do preço, um destes códigos: BRL, USD, EUR, ARS, PYG,',
@@ -194,12 +208,13 @@ async function analyzeProductImage(file) {
         properties: {
           name: { type: 'string' },
           brand: { type: 'string' },
+          category: { type: 'string' },
           volume: { type: 'string' },
           gender: { type: 'string' },
           price: { type: 'string' },
           currency: { type: 'string' },
         },
-        required: ['name', 'brand', 'volume', 'gender', 'price', 'currency'],
+        required: ['name', 'brand', 'category', 'volume', 'gender', 'price', 'currency'],
       },
     },
   };
@@ -236,6 +251,7 @@ async function analyzeProductImage(file) {
   return {
     name: (parsed.name || '').trim(),
     brand: (parsed.brand || '').trim(),
+    category: (parsed.category || '').trim(),
     volume: (parsed.volume || '').trim(),
     gender: GENDERS.find((x) => x.toLowerCase() === g) || '',
     price: (parsed.price || '').trim(),
@@ -273,6 +289,7 @@ async function renderCatalog() {
   if (querySig !== _lastQuerySig) { state.visible = PAGE_SIZE; _lastQuerySig = querySig; }
 
   let products = await DB.listProducts();
+  const allCategories = categoriesFrom(products); // antes de filtrar: catálogo inteiro
 
   if (onlyFav) products = products.filter((p) => p.favorite);
   if (state.category !== 'Todos') products = products.filter((p) => p.category === state.category);
@@ -332,7 +349,7 @@ async function renderCatalog() {
   lists.forEach((l) => (l.items || []).forEach((it) => inAnyList.add(it.productId)));
 
   // chips de categoria (rolagem horizontal rápida)
-  const catChips = ['Todos', ...CATEGORIES]
+  const catChips = ['Todos', ...allCategories]
     .map((c) => `<button class="chip ${state.category === c ? 'active' : ''}" data-cat="${c}">${c}</button>`)
     .join('');
 
@@ -384,7 +401,7 @@ async function renderCatalog() {
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>${count ? `<span class="badge">${count}</span>` : ''}
       </button>
     </div>
-    ${onlyFav || CATEGORIES.length <= 1 ? '' : `<div class="chips">${catChips}</div>`}
+    ${onlyFav || allCategories.length <= 1 ? '' : `<div class="chips">${catChips}</div>`}
     ${count ? `<div class="active-filters">${activeChips}<button class="achip clear" data-rm="all">Limpar</button></div>` : ''}
     <main>${body}</main>
     <button class="fab" id="fab" aria-label="Adicionar produto">+</button>
@@ -1473,7 +1490,10 @@ async function openProductForm(existing) {
   // marca escolhida: id da entidade + nome pra exibir. Nome sem id = pendente (vira marca no save).
   let selectedBrandId = product.brandId || null;
   let selectedBrandName = product.brand || '';
-  const catOptions = CATEGORIES.map((c) => `<option value="${c}" ${product.category === c ? 'selected' : ''}>${c}</option>`).join('');
+  // categoria é campo livre: sugere as já usadas (datalist), mas aceita digitar uma nova.
+  const allProducts = await DB.listProducts();
+  const catList = categoriesFrom(allProducts);
+  const catDatalist = catList.map((c) => `<option value="${esc(c)}"></option>`).join('');
   const genderOptions = GENDERS.map((g) => `<option value="${g}" ${product.gender === g ? 'selected' : ''}>${g}</option>`).join('');
 
   const bg = openSheet(`
@@ -1509,7 +1529,8 @@ async function openProductForm(existing) {
     </div>
     <div class="row">
       <label class="field"><span>Categoria</span>
-        <select class="input" id="p-cat">${catOptions}</select></label>
+        <input class="input" id="p-cat" list="p-cat-list" value="${esc(product.category || '')}" placeholder="Ex.: Perfumes, Celular">
+        <datalist id="p-cat-list">${catDatalist}</datalist></label>
       <label class="field"><span>Gênero</span>
         <select class="input" id="p-gender">
           <option value="">— não definido —</option>${genderOptions}
@@ -1582,6 +1603,7 @@ async function openProductForm(existing) {
       };
       let n = 0;
       if (fillIfEmpty('#p-name', info.name)) n++;
+      if (fillIfEmpty('#p-cat', info.category)) n++;
       // marca: só preenche se ainda não houver escolha. Casa com a entidade
       // existente (id determinístico) ou deixa o nome pendente p/ criar no save.
       if (info.brand && !selectedBrandId && !selectedBrandName) {
@@ -1660,7 +1682,7 @@ async function openProductForm(existing) {
       name,
       brandId,
       volume: $('#p-volume', bg).value.trim(),
-      category: $('#p-cat', bg).value,
+      category: $('#p-cat', bg).value.trim() || 'Outros',
       gender: $('#p-gender', bg).value || null,
       image: imageData,
     });
