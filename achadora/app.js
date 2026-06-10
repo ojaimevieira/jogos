@@ -36,9 +36,44 @@ function currencyOptions(selected) {
   ).join('');
 }
 
+// ---------- regiões ----------
+// Região é um conceito de primeira classe: define o enquadramento (centro + zoom)
+// padrão dos mapas quando ainda não há um ponto melhor, e o viés de país da busca
+// de endereços. Adicionar uma região = só pôr um item aqui — o seletor da aba
+// Mapa, o fallback dos mapas e a busca passam a usá-la sem tocar na lógica.
+const REGIONS = [
+  { id: 'cde', name: 'Ciudad del Este', center: [-25.5097, -54.6111], zoom: 14, countries: 'py,br' },
+  { id: 'foz', name: 'Foz do Iguaçu',   center: [-25.5163, -54.5854], zoom: 13, countries: 'br,py' },
+  { id: 'br',  name: 'Brasil',          center: [-14.235, -51.925],  zoom: 4,  countries: 'br' },
+];
+const DEFAULT_REGION_ID = 'cde';
+const REGION_STORAGE = 'achadora.region';
+
+// região ativa: state → localStorage → padrão. Nunca devolve null (cai no 1º item).
+function activeRegion() {
+  const id = state.region || localStorage.getItem(REGION_STORAGE) || DEFAULT_REGION_ID;
+  return REGIONS.find((r) => r.id === id) || REGIONS[0];
+}
+function setActiveRegion(id) {
+  if (!REGIONS.some((r) => r.id === id)) return;
+  state.region = id;
+  try { localStorage.setItem(REGION_STORAGE, id); } catch (e) { /* modo privado */ }
+}
+// <select> de região, montado a partir do mesmo REGIONS (sem lista duplicada).
+function regionBarHtml() {
+  const cur = activeRegion().id;
+  const opts = REGIONS.map((r) =>
+    `<option value="${r.id}" ${r.id === cur ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
+  return `<div class="region-bar">
+      <span class="region-ic">🌎</span>
+      <select class="region-select" id="region-pick" aria-label="Região do mapa">${opts}</select>
+    </div>`;
+}
+
 const state = {
   tab: 'catalogo',     // catalogo | favoritos | lojas
   search: '',
+  region: null,        // id da região ativa (null = lê do localStorage / padrão)
   category: 'Todos',   // chip de categoria (rápido)
   brands: [],          // marcas selecionadas no painel (vazio = todas)
   genders: [],         // gêneros selecionados no painel (vazio = todos)
@@ -671,13 +706,13 @@ async function geocodeAddress(q) {
   }
 }
 
-// busca várias sugestões de lugar (autocomplete do editor). Viés p/ Paraguai e
-// Brasil — domínio da Achadora (Ciudad del Este e fronteira). Retorna lista de
-// { lat, lng, label }.
+// busca várias sugestões de lugar (autocomplete do editor). O viés de país segue
+// a região ativa (ex.: Ciudad del Este → py,br), não um literal fixo. Retorna
+// lista de { lat, lng, label }.
 async function geocodeSearch(q, limit = 5) {
   if (!q || q.trim().length < 3) return [];
   const url = 'https://nominatim.openstreetmap.org/search?format=json&addressdetails=0'
-    + '&accept-language=pt&countrycodes=py,br&limit=' + limit
+    + '&accept-language=pt&countrycodes=' + activeRegion().countries + '&limit=' + limit
     + '&q=' + encodeURIComponent(q.trim());
   try {
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -686,6 +721,21 @@ async function geocodeSearch(q, limit = 5) {
     return data.map((d) => ({ lat: parseFloat(d.lat), lng: parseFloat(d.lon), label: d.display_name }));
   } catch (e) {
     return [];
+  }
+}
+
+// resolve um endereço aproximado de um ponto (readout do seletor). Best-effort:
+// se falhar/sem net, o seletor continua mostrando as coordenadas.
+async function reverseGeocode(lat, lng) {
+  const url = 'https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&accept-language=pt'
+    + '&lat=' + lat + '&lon=' + lng;
+  try {
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.display_name ? data.display_name : null;
+  } catch (e) {
+    return null;
   }
 }
 
@@ -711,7 +761,7 @@ async function renderStores() {
 
   let body;
   if (view === 'mapa') {
-    body = `<div id="store-map" class="store-map"></div><div id="map-hint" class="map-hint"></div>`;
+    body = `${regionBarHtml()}<div id="store-map" class="store-map"></div><div id="map-hint" class="map-hint"></div>`;
   } else if (stores.length) {
     body = stores.map((s) => `
         <div class="list-item">
@@ -773,9 +823,19 @@ async function initStoreMap(stores) {
   setDefaultIcon(L);
   const el = $('#store-map');
   if (!el) return;
-  const center = located.length ? [located[0].lat, located[0].lng] : [-14.235, -51.925];
-  const map = newMap(L, el, center, located.length ? 13 : 4);
+  // sem lojas localizadas, enquadra na região ativa em vez de num literal fixo.
+  const reg = activeRegion();
+  const center = located.length ? [located[0].lat, located[0].lng] : reg.center;
+  const map = newMap(L, el, center, located.length ? 13 : reg.zoom);
   setTimeout(() => map.invalidateSize(), 200);
+
+  // trocar a região reposiciona o mapa na hora (e persiste a escolha).
+  const regionPick = $('#region-pick');
+  if (regionPick) regionPick.addEventListener('change', () => {
+    setActiveRegion(regionPick.value);
+    const r = activeRegion();
+    map.setView(r.center, r.zoom);
+  });
 
   const pts = [];
   located.forEach((s) => {
@@ -1498,6 +1558,202 @@ function enableDragToClose(bg, sheet) {
   document.addEventListener('mouseup', onEnd);
 }
 
+// ---------- seletor de localização (página fullscreen — padrão ouro) ----------
+// O mapa é o herói em tela cheia: pino fixo no centro, busca + GPS + zoom
+// flutuando, e barra inferior com o endereço resolvido + "Confirmar". É uma etapa
+// de navegação própria (pushPage), não um quadro espremido no form — o que mata o
+// conflito de gesto (arrastar = pan, não rolar a folha) e dá área pra mirar.
+// `initial`: { lat, lng } | null. `onConfirm({ lat, lng, address })` recebe o ponto.
+function openLocationPicker(initial, onConfirm) {
+  pushPage((el) => {
+    const body = $('.page-body', el);
+    body.classList.add('picker-body');
+    body.innerHTML = `
+      <div class="pick-wrap full" id="pick-wrap">
+        <div id="pick-map" class="pick-map"></div>
+        <div class="pick-pin-shadow" aria-hidden="true"></div>
+        <div class="pick-pin" aria-hidden="true">
+          <svg width="34" height="46" viewBox="0 0 34 46" xmlns="http://www.w3.org/2000/svg">
+            <path d="M17 1C8.2 1 1 8 1 16.6 1 28 17 45 17 45s16-17 16-28.4C33 8 25.8 1 17 1z"
+                  fill="var(--accent)" stroke="#fff" stroke-width="2"/>
+            <circle cx="17" cy="16.5" r="5.5" fill="#fff"/>
+          </svg>
+        </div>
+        <div class="map-overlay top-left">
+          <div class="map-search" id="map-search">
+            <span class="ic">🔎</span>
+            <input class="map-search-input" id="st-search" type="text"
+                   placeholder="Buscar endereço ou lugar" autocomplete="off" enterkeyhint="search">
+            <button class="map-search-clear" type="button" id="st-search-clear" aria-label="Limpar">✕</button>
+            <div class="map-suggest" id="st-suggest" hidden></div>
+          </div>
+        </div>
+        <div class="map-overlay top-right zoom">
+          <button class="map-fab sm" type="button" id="st-zin" aria-label="Aproximar">+</button>
+          <button class="map-fab sm" type="button" id="st-zout" aria-label="Afastar">−</button>
+        </div>
+        <button class="map-fab gps" type="button" id="st-geo" aria-label="Minha localização">📍</button>
+      </div>
+      <div class="pick-confirmbar">
+        <div class="pick-readout-line ${initial ? 'on' : ''}" id="st-coords">${initial
+          ? '📍 ' + initial.lat.toFixed(5) + ', ' + initial.lng.toFixed(5)
+          : 'Mova o mapa para posicionar o pino'}</div>
+        <button class="btn" id="pick-confirm">Confirmar localização</button>
+      </div>`;
+
+    let picked = initial ? { lat: initial.lat, lng: initial.lng } : null;
+    let lastAddr = null; // último endereço resolvido p/ o ponto atual (pode ser null)
+
+    (async () => {
+      let L;
+      try {
+        L = await loadLeaflet();
+      } catch (e) {
+        const wrap = $('#pick-wrap', el);
+        if (wrap) wrap.innerHTML = '<div class="map-fail">Mapa indisponível (sem internet). Volte e salve a loja sem localização.</div>';
+        return;
+      }
+      setDefaultIcon(L);
+      const mapEl = $('#pick-map', el);
+      const wrap = $('#pick-wrap', el);
+      if (!mapEl) return;
+      const reg = activeRegion();
+      const center = picked ? [picked.lat, picked.lng] : reg.center;
+      const map = newMap(L, mapEl, center, picked ? 16 : reg.zoom, { zoomControl: false });
+      setTimeout(() => map.invalidateSize(), 250);
+
+      // Padrão "pino fixo": o pino mora no centro e o usuário arrasta o mapa por
+      // baixo; o ponto é lido de map.getCenter(). `active` evita marcar um ponto
+      // falso enquanto o usuário ainda não tocou no mapa.
+      let active = picked != null;
+      const coordsEl = $('#st-coords', el);
+      const showCoords = () => {
+        if (!coordsEl) return;
+        if (active && picked) {
+          coordsEl.classList.add('on');
+          coordsEl.textContent = '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5);
+        } else {
+          coordsEl.classList.remove('on');
+          coordsEl.textContent = 'Mova o mapa para posicionar o pino';
+        }
+      };
+      // reverse-geocode com debounce: troca as coordenadas pelo endereço quando
+      // resolve. Ignora resposta atrasada se o usuário já moveu o pino de novo.
+      let revTimer = null;
+      const resolveAddress = () => {
+        lastAddr = null;
+        if (!active || !picked) return;
+        clearTimeout(revTimer);
+        const at = picked;
+        revTimer = setTimeout(async () => {
+          const addr = await reverseGeocode(at.lat, at.lng);
+          if (picked !== at) return;
+          lastAddr = addr;
+          if (coordsEl && addr) {
+            coordsEl.classList.add('on');
+            coordsEl.textContent = '📍 ' + addr;
+          }
+        }, 600);
+      };
+
+      mapEl.addEventListener('pointerdown', () => { active = true; }, true);
+      map.on('movestart', () => wrap && wrap.classList.add('dragging'));
+      map.on('moveend', () => {
+        wrap && wrap.classList.remove('dragging');
+        if (!active) return;
+        const c = map.getCenter();
+        picked = { lat: c.lat, lng: c.lng };
+        showCoords();
+        resolveAddress();
+      });
+
+      // recentra o mapa num ponto (busca/GPS); o moveend grava em `picked`
+      const goTo = (lat, lng, zoom) => {
+        active = true;
+        map.setView([lat, lng], zoom || Math.max(map.getZoom(), 16));
+      };
+
+      $('#st-zin', el).addEventListener('click', () => map.zoomIn());
+      $('#st-zout', el).addEventListener('click', () => map.zoomOut());
+      $('#st-geo', el).addEventListener('click', () => {
+        if (!navigator.geolocation) return toast('GPS indisponível');
+        toast('Buscando sua localização…');
+        navigator.geolocation.getCurrentPosition(
+          (pos) => goTo(pos.coords.latitude, pos.coords.longitude, 16),
+          () => toast('Não consegui pegar o GPS'),
+          { enableHighAccuracy: true, timeout: 10000 });
+      });
+
+      // busca dentro do mapa com autocomplete (estilo Google Maps)
+      const search = $('#st-search', el);
+      const suggest = $('#st-suggest', el);
+      const searchBox = $('#map-search', el);
+      const clearBtn = $('#st-search-clear', el);
+      let searchTimer = null, lastQuery = '';
+
+      const closeSuggest = () => { suggest.hidden = true; suggest.innerHTML = ''; };
+      const renderSuggest = (items) => {
+        if (!items.length) { closeSuggest(); return; }
+        suggest.innerHTML = items.map((it, i) => {
+          const parts = it.label.split(',').map((s) => s.trim());
+          const ttl = parts.shift();
+          const sub = parts.join(', ');
+          return `<button type="button" data-i="${i}">
+            <span class="pin">📍</span>
+            <span class="lbl"><span class="ttl">${esc(ttl)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
+          </button>`;
+        }).join('');
+        suggest.hidden = false;
+        suggest.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+          const it = items[+b.dataset.i];
+          search.value = it.label.split(',')[0].trim();
+          searchBox.classList.add('has-text');
+          closeSuggest();
+          goTo(it.lat, it.lng, 17);
+        }));
+      };
+
+      search.addEventListener('input', () => {
+        const q = search.value.trim();
+        searchBox.classList.toggle('has-text', q.length > 0);
+        clearTimeout(searchTimer);
+        if (q.length < 3) { closeSuggest(); return; }
+        searchTimer = setTimeout(async () => {
+          if (q === lastQuery) return;
+          lastQuery = q;
+          const items = await geocodeSearch(q);
+          if (search.value.trim() === q) renderSuggest(items); // ignora resposta atrasada
+        }, 400);
+      });
+      search.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const first = suggest.querySelector('button');
+        if (first) first.click();
+      });
+      clearBtn.addEventListener('click', () => {
+        search.value = ''; searchBox.classList.remove('has-text');
+        closeSuggest(); search.focus();
+      });
+      map.on('movestart', closeSuggest);
+      // fecha o dropdown ao tocar fora da caixa (escopado à página, sem vazar listener)
+      el.addEventListener('pointerdown', (e) => {
+        if (!searchBox.contains(e.target)) closeSuggest();
+      });
+
+      showCoords();
+      resolveAddress();
+    })();
+
+    // Confirmar devolve o ponto ao chamador e volta um nível. O ‹ (voltar) cancela
+    // sem chamar onConfirm — o ponto anterior do form fica intacto.
+    $('#pick-confirm', el).addEventListener('click', () => {
+      onConfirm(picked ? { lat: picked.lat, lng: picked.lng, address: lastAddr } : null);
+      popLayer();
+    });
+  }, { title: 'Localização da loja' });
+}
+
 // ---------- formulário de loja ----------
 async function openStoreForm(id) {
   const store = id ? await DB.getStore(id) : { name: '', address: '' };
@@ -1511,158 +1767,41 @@ async function openStoreForm(id) {
       <input class="input" id="st-addr" value="${esc(store.address || '')}" placeholder="Rua, bairro, cidade"></label>
 
     <div class="section-title">Localização no mapa</div>
-    <div class="pick-wrap" id="pick-wrap">
-      <div id="pick-map" class="pick-map"></div>
-      <div class="pick-pin-shadow" aria-hidden="true"></div>
-      <div class="pick-pin" aria-hidden="true">
-        <svg width="34" height="46" viewBox="0 0 34 46" xmlns="http://www.w3.org/2000/svg">
-          <path d="M17 1C8.2 1 1 8 1 16.6 1 28 17 45 17 45s16-17 16-28.4C33 8 25.8 1 17 1z"
-                fill="var(--accent)" stroke="#fff" stroke-width="2"/>
-          <circle cx="17" cy="16.5" r="5.5" fill="#fff"/>
-        </svg>
-      </div>
-      <div class="map-overlay top-left">
-        <div class="map-search" id="map-search">
-          <span class="ic">🔎</span>
-          <input class="map-search-input" id="st-search" type="text"
-                 placeholder="Buscar endereço ou lugar" autocomplete="off" enterkeyhint="search">
-          <button class="map-search-clear" type="button" id="st-search-clear" aria-label="Limpar">✕</button>
-          <div class="map-suggest" id="st-suggest" hidden></div>
-        </div>
-      </div>
-      <div class="map-overlay top-right zoom">
-        <button class="map-fab sm" type="button" id="st-zin" aria-label="Aproximar">+</button>
-        <button class="map-fab sm" type="button" id="st-zout" aria-label="Afastar">−</button>
-      </div>
-      <button class="map-fab gps" type="button" id="st-geo" aria-label="Minha localização">📍</button>
-      <div class="pick-readout ${picked ? 'on' : ''}" id="st-coords">${picked
+    <button type="button" class="loc-field ${picked ? 'on' : ''}" id="loc-field">
+      <span class="loc-ic">🗺️</span>
+      <span class="loc-text" id="loc-text">${picked
         ? '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5)
-        : 'Mova o mapa para posicionar o pino'}</div>
-    </div>
+        : 'Toque para definir no mapa'}</span>
+      <span class="loc-chev">›</span>
+    </button>
 
     <button class="btn" id="st-save" style="margin-top:14px">Salvar</button>
     ${id ? '<button class="btn danger" id="st-del" style="margin-top:10px">Excluir loja</button>' : ''}
   `);
 
-  // mapa de seleção (carrega o Leaflet sob demanda)
-  (async () => {
-    let L;
-    try {
-      L = await loadLeaflet();
-    } catch (e) {
-      const wrap = $('#pick-wrap', bg);
-      if (wrap) wrap.innerHTML = '<div class="map-fail">Mapa indisponível (sem internet). Você ainda pode salvar a loja sem localização.</div>';
-      return;
+  // o campo de localização abre o seletor fullscreen (padrão ouro). Confirmar lá
+  // devolve o ponto (e, se houver, o endereço resolvido) e atualiza o resumo aqui.
+  const locField = $('#loc-field', bg);
+  const locText = $('#loc-text', bg);
+  const refreshLoc = () => {
+    if (picked) {
+      locField.classList.add('on');
+      locText.textContent = '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5);
+    } else {
+      locField.classList.remove('on');
+      locText.textContent = 'Toque para definir no mapa';
     }
-    setDefaultIcon(L);
-    const el = $('#pick-map', bg);
-    const wrap = $('#pick-wrap', bg);
-    if (!el) return;
-    const center = picked ? [picked.lat, picked.lng] : [-14.235, -51.925];
-    const map = newMap(L, el, center, picked ? 16 : 4, { zoomControl: false });
-    setTimeout(() => map.invalidateSize(), 250);
-
-    // Padrão "pino fixo": o pino mora no centro da tela e o usuário arrasta o
-    // mapa por baixo. O ponto é lido de map.getCenter(). `active` evita marcar
-    // um ponto falso enquanto o usuário ainda não tocou no mapa.
-    let active = picked != null;
-    const updateCoords = () => {
-      const c = $('#st-coords', bg);
-      if (!c) return;
-      if (active && picked) {
-        c.classList.add('on');
-        c.textContent = '📍 ' + picked.lat.toFixed(5) + ', ' + picked.lng.toFixed(5);
-      } else {
-        c.classList.remove('on');
-        c.textContent = 'Mova o mapa para posicionar o pino';
-      }
-    };
-    // qualquer gesto do usuário sobre o mapa = intenção de marcar o ponto
-    el.addEventListener('pointerdown', () => { active = true; }, true);
-    map.on('movestart', () => wrap && wrap.classList.add('dragging'));
-    map.on('moveend', () => {
-      wrap && wrap.classList.remove('dragging');
-      if (!active) return;
-      const c = map.getCenter();
-      picked = { lat: c.lat, lng: c.lng };
-      updateCoords();
-    });
-
-    // recentra o mapa num ponto (busca/GPS); o moveend grava em `picked`
-    const goTo = (lat, lng, zoom) => {
-      active = true;
-      map.setView([lat, lng], zoom || Math.max(map.getZoom(), 16));
-    };
-
-    $('#st-zin', bg).addEventListener('click', () => map.zoomIn());
-    $('#st-zout', bg).addEventListener('click', () => map.zoomOut());
-    $('#st-geo', bg).addEventListener('click', () => {
-      if (!navigator.geolocation) return toast('GPS indisponível');
-      toast('Buscando sua localização…');
-      navigator.geolocation.getCurrentPosition(
-        (pos) => goTo(pos.coords.latitude, pos.coords.longitude, 16),
-        () => toast('Não consegui pegar o GPS'),
-        { enableHighAccuracy: true, timeout: 10000 });
-    });
-    // busca dentro do mapa com autocomplete (estilo Google Maps)
-    const search = $('#st-search', bg);
-    const suggest = $('#st-suggest', bg);
-    const searchBox = $('#map-search', bg);
-    const clearBtn = $('#st-search-clear', bg);
-    let searchTimer = null, lastQuery = '';
-
-    const closeSuggest = () => { suggest.hidden = true; suggest.innerHTML = ''; };
-    const renderSuggest = (items) => {
-      if (!items.length) { closeSuggest(); return; }
-      suggest.innerHTML = items.map((it, i) => {
-        const parts = it.label.split(',').map((s) => s.trim());
-        const ttl = parts.shift();
-        const sub = parts.join(', ');
-        return `<button type="button" data-i="${i}">
-          <span class="pin">📍</span>
-          <span class="lbl"><span class="ttl">${esc(ttl)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
-        </button>`;
-      }).join('');
-      suggest.hidden = false;
-      suggest.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
-        const it = items[+b.dataset.i];
-        search.value = it.label.split(',')[0].trim();
-        searchBox.classList.add('has-text');
+  };
+  locField.addEventListener('click', () => {
+    openLocationPicker(picked, (point) => {
+      picked = point ? { lat: point.lat, lng: point.lng } : null;
+      if (point && point.address) {
         const addr = $('#st-addr', bg);
-        if (addr && !addr.value.trim()) addr.value = it.label;
-        closeSuggest();
-        goTo(it.lat, it.lng, 17);
-      }));
-    };
-
-    search.addEventListener('input', () => {
-      const q = search.value.trim();
-      searchBox.classList.toggle('has-text', q.length > 0);
-      clearTimeout(searchTimer);
-      if (q.length < 3) { closeSuggest(); return; }
-      searchTimer = setTimeout(async () => {
-        if (q === lastQuery) return;
-        lastQuery = q;
-        const items = await geocodeSearch(q);
-        if (search.value.trim() === q) renderSuggest(items); // ignora resposta atrasada
-      }, 400);
+        if (addr && !addr.value.trim()) addr.value = point.address;
+      }
+      refreshLoc();
     });
-    search.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      const first = suggest.querySelector('button');
-      if (first) first.click();
-    });
-    clearBtn.addEventListener('click', () => {
-      search.value = ''; searchBox.classList.remove('has-text');
-      closeSuggest(); search.focus();
-    });
-    map.on('movestart', closeSuggest);
-    // fecha o dropdown ao tocar fora da caixa (escopado ao sheet, sem vazar listener)
-    bg.addEventListener('pointerdown', (e) => {
-      if (!searchBox.contains(e.target)) closeSuggest();
-    });
-  })();
+  });
 
   $('#st-save', bg).addEventListener('click', async () => {
     const name = $('#st-name', bg).value.trim();
