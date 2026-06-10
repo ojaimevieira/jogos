@@ -63,6 +63,18 @@ async function distinctBrands() {
     .sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
+// Normaliza pra comparar marcas: sem acento, sem caixa, espaços colapsados.
+const normBrand = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().replace(/\s+/g, ' ').trim();
+
+// Se a marca digitada já existe (ignorando caixa/acento/espaço), devolve a
+// grafia CANÔNICA que já está no catálogo — evita "Lattafa"/"lattafa" duplicados.
+function canonicalBrand(input, known) {
+  const t = normBrand(input);
+  if (!t) return '';
+  return known.find((b) => normBrand(b) === t) || input.trim();
+}
+
 const app = document.getElementById('app');
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -1395,7 +1407,9 @@ async function openStoreForm(id) {
 async function openProductForm(existing) {
   const product = existing || { name: '', brand: '', category: 'Perfumes', gender: '', volume: '', userNote: '', image: null };
   const stores = await DB.listStores();
+  const brands = await distinctBrands(); // pra sugerir/normalizar a marca e evitar duplicata
   const storeOptions = stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  const brandOptions = brands.map((b) => `<option value="${esc(b)}"></option>`).join('');
   const catOptions = CATEGORIES.map((c) => `<option value="${c}" ${product.category === c ? 'selected' : ''}>${c}</option>`).join('');
   const genderOptions = GENDERS.map((g) => `<option value="${g}" ${product.gender === g ? 'selected' : ''}>${g}</option>`).join('');
 
@@ -1423,7 +1437,8 @@ async function openProductForm(existing) {
       <input class="input" id="p-name" value="${esc(product.name)}" placeholder="Ex.: Sauvage EDT"></label>
     <div class="row">
       <label class="field"><span>Marca</span>
-        <input class="input" id="p-brand" value="${esc(product.brand || '')}" placeholder="Ex.: Dior"></label>
+        <input class="input" id="p-brand" list="brand-list" value="${esc(product.brand || '')}" placeholder="Ex.: Dior" autocomplete="off">
+        <datalist id="brand-list">${brandOptions}</datalist></label>
       <label class="field"><span>Tamanho</span>
         <input class="input" id="p-volume" value="${esc(product.volume || '')}" placeholder="100 ml"></label>
     </div>
@@ -1502,7 +1517,8 @@ async function openProductForm(existing) {
       };
       let n = 0;
       if (fillIfEmpty('#p-name', info.name)) n++;
-      if (fillIfEmpty('#p-brand', info.brand)) n++;
+      // marca: se já existe no catálogo, usa a grafia canônica (evita duplicata)
+      if (fillIfEmpty('#p-brand', canonicalBrand(info.brand, brands))) n++;
       if (fillIfEmpty('#p-volume', info.volume)) n++;
       if (fillIfEmpty('#p-price', info.price)) n++; // campos de preço só existem no cadastro novo
       const gsel = $('#p-gender', bg);
@@ -1551,7 +1567,7 @@ async function openProductForm(existing) {
     const saved = await DB.saveProduct({
       ...product,
       name,
-      brand: $('#p-brand', bg).value.trim(),
+      brand: canonicalBrand($('#p-brand', bg).value, brands),
       volume: $('#p-volume', bg).value.trim(),
       category: $('#p-cat', bg).value,
       gender: $('#p-gender', bg).value || null,
