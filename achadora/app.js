@@ -340,7 +340,10 @@ async function render() {
   return renderCatalog();
 }
 
-async function renderCatalog() {
+// Computa a lista filtrada/ordenada/paginada e devolve os pedaços de HTML do
+// catálogo (corpo da grade, chips, contadores). Separado do render pra que a
+// busca possa repintar só a grade sem recriar o <input> (ver rerenderCatalogList).
+async function buildCatalogView() {
   const onlyFav = state.tab === 'favoritos';
 
   // Paginação incremental: se a consulta (aba/busca/filtros) mudou, volta à 1ª página.
@@ -452,27 +455,34 @@ async function renderCatalog() {
     body = `<div class="grid">${cards}</div>${catalogFooter(shown, products.length)}`;
   }
 
+  return { onlyFav, allCategories, catChips, count, activeChips, body };
+}
+
+async function renderCatalog() {
+  const view = await buildCatalogView();
   setHtml(app, `
     <header class="app-header">
       <h1>🔍 Achadora</h1>
-      <div class="subtitle">${onlyFav ? 'Seus favoritos' : 'Fareja preços, acha promoções'}</div>
+      <div class="subtitle">${view.onlyFav ? 'Seus favoritos' : 'Fareja preços, acha promoções'}</div>
     </header>
     <div class="search-row">
       <div class="search">
         🔍 <input id="search" placeholder="Buscar por nome ou marca" value="${esc(state.search)}" />
       </div>
-      <button class="filter-btn ${count ? 'on' : ''}" id="filter-btn" aria-label="Filtros">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>${count ? `<span class="badge">${count}</span>` : ''}
+      <button class="filter-btn ${view.count ? 'on' : ''}" id="filter-btn" aria-label="Filtros">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>${view.count ? `<span class="badge">${view.count}</span>` : ''}
       </button>
     </div>
-    ${onlyFav || allCategories.length <= 1 ? '' : `<div class="chips">${catChips}</div>`}
-    ${count ? `<div class="active-filters">${activeChips}<button class="achip clear" data-rm="all">Limpar</button></div>` : ''}
-    <main>${body}</main>
+    ${view.onlyFav || view.allCategories.length <= 1 ? '' : `<div class="chips">${view.catChips}</div>`}
+    ${view.count ? `<div class="active-filters">${view.activeChips}<button class="achip clear" data-rm="all">Limpar</button></div>` : ''}
+    <main>${view.body}</main>
   `);
 
   $('#search').addEventListener('input', (e) => {
     state.search = e.target.value;
-    // re-render leve da lista sem perder o foco do input
+    // re-render só da lista: mantém o <input> de busca vivo no DOM. Trocar o app
+    // inteiro destruía o campo e, no celular, recriar o input fecha o teclado (e
+    // o foco não volta sozinho fora de um toque). Por isso a busca mexe só no <main>.
     debouncedRerenderList();
   });
   $('#filter-btn').addEventListener('click', () => openFilterSheet());
@@ -490,6 +500,20 @@ async function renderCatalog() {
       render();
     }));
   bindCards(app);
+  const verMais = $('#ver-mais');
+  if (verMais) verMais.addEventListener('click', appendMore);
+}
+
+// Re-render disparado ao digitar na busca: recomputa só a grade e atualiza apenas
+// o <main>, preservando o <input> de busca (e, com ele, o foco e o teclado aberto
+// no celular). Cai pro render() completo se a tela não for a do catálogo.
+async function rerenderCatalogList() {
+  if (state.tab === 'lojas' || state.tab === 'listas') return render();
+  const main = app.querySelector('main');
+  if (!main) return render();
+  const view = await buildCatalogView();
+  setHtml(main, view.body);
+  bindCards(main);
   const verMais = $('#ver-mais');
   if (verMais) verMais.addEventListener('click', appendMore);
 }
@@ -615,7 +639,7 @@ async function openFilterSheet() {
 let _rerenderTimer;
 function debouncedRerenderList() {
   clearTimeout(_rerenderTimer);
-  _rerenderTimer = setTimeout(render, 220);
+  _rerenderTimer = setTimeout(rerenderCatalogList, 220);
 }
 
 function productCard(p, summary, inList = false) {
