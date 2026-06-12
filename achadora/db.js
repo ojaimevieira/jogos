@@ -349,6 +349,7 @@ const DB = {
       if (!s.createdAt) s.createdAt = Date.now();
       s.source = s.source || 'user';
     }
+    s.updatedAt = Date.now();
     return put('stores', s);
   },
   deleteStore: (id) => del('stores', id),
@@ -361,6 +362,7 @@ const DB = {
       pr.createdAt = Date.now();
       pr.source = pr.source || 'user';
     }
+    pr.updatedAt = Date.now();
     return put('prices', pr);
   },
   deletePrice: (id) => del('prices', id),
